@@ -4,17 +4,12 @@
 
 ### Frontend
 
-- React
+- Svelte 5
 
 ### Backend
 
-- Node.js
-- Express
-
-### Database
-
-- MongoDB
+- SvelteKit 2
 
 ### API
 
-- Wikipedia API
+- Wikipedia "On This Day" REST API (via Wikimedia)
