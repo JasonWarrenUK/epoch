@@ -33,7 +33,7 @@ Grand Chronicle allows users to create fictional characters who experience real 
 
 <!-- ![Tech Stack](https://github.com/JasonWarrenUK/JasonWarrenUK/raw/main/icons.png) -->
 
-- **Frontend**: React, CSS
-- **Backend**: Node.js, Express
-- **Database**: MongoDB
-- **API**: Wikipedia API
+- **Frontend**: Svelte 5
+- **Backend**: SvelteKit 2, Deno or Bun
+- **Database**: MongoDB or Neo4j
+- **Data Analysis**: Python
