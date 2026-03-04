@@ -8,9 +8,7 @@
 		<h2>{character.name}</h2>
 		<p class="lifespan">
 			{character.birthYear} &ndash; {character.deathYear}
-			{#if character.location}
-				&middot; {character.location}
-			{/if}
+			&middot; {character.location}
 		</p>
 		<p class="event-count">{events.length} historical events discovered</p>
 	</div>
@@ -22,7 +20,7 @@
 			{/each}
 		</div>
 	{:else}
-		<p class="no-events">No events found for this lifetime. Try adjusting the years.</p>
+		<p class="no-events">No events found matching this lifetime and location. Try broadening the location (e.g. "England" instead of a specific town) or adjusting the years.</p>
 	{/if}
 </section>
 

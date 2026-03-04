@@ -30,8 +30,8 @@
 		</div>
 
 		<div class="field full">
-			<label for="location">Location <span class="optional">(optional)</span></label>
-			<input type="text" id="location" name="location" placeholder="e.g. London, England" />
+			<label for="location">Location</label>
+			<input type="text" id="location" name="location" required placeholder="e.g. London, England" />
 		</div>
 	</div>
 
@@ -78,11 +78,6 @@
 		font-weight: 600;
 		margin-bottom: 0.3rem;
 		color: var(--color-text);
-	}
-
-	.optional {
-		font-weight: 400;
-		color: var(--color-text-muted);
 	}
 
 	input {

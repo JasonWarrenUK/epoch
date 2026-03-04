@@ -9,10 +9,10 @@ export const actions = {
 		const name = data.get('name')?.toString().trim();
 		const birthYearStr = data.get('birthYear')?.toString();
 		const deathYearStr = data.get('deathYear')?.toString();
-		const location = data.get('location')?.toString().trim() || undefined;
+		const location = data.get('location')?.toString().trim();
 
-		if (!name || !birthYearStr || !deathYearStr) {
-			return fail(400, { error: 'Name, birth year, and death year are required.' });
+		if (!name || !birthYearStr || !deathYearStr || !location) {
+			return fail(400, { error: 'Name, birth year, death year, and location are all required.' });
 		}
 
 		const birthYear = parseInt(birthYearStr, 10);
@@ -33,7 +33,7 @@ export const actions = {
 		const character = { name, birthYear, deathYear, location };
 
 		try {
-			const events = await fetchEventsForLifetime(birthYear, deathYear);
+			const events = await fetchEventsForLifetime(birthYear, deathYear, location);
 			return { character, events };
 		} catch (err) {
 			console.error('Wikipedia API error:', err);

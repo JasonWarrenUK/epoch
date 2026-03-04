@@ -3,7 +3,7 @@
  * @property {string} name
  * @property {number} birthYear
  * @property {number} deathYear
- * @property {string} [location]
+ * @property {string} location
  */
 
 /**
