@@ -12,7 +12,7 @@
 	<p class="text-[0.95rem] leading-relaxed mb-1">{event.text}</p>
 	{#if event.pageUrl}
 		<a href={event.pageUrl} target="_blank" rel="noopener noreferrer" class="text-sm text-secondary hover:underline">
-			Read more: {event.pageTitle}
+			Read more: {event.pageTitle} <span class="sr-only">(opens in new tab)</span>
 		</a>
 	{/if}
 </div>

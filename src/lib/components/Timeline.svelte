@@ -14,8 +14,8 @@
 	</div>
 
 	{#if events.length > 0}
-		<ul class="timeline timeline-vertical timeline-compact">
-			{#each events as event, i (event.year + event.text.slice(0, 30))}
+		<ul class="timeline timeline-vertical timeline-compact" aria-label="Historical events timeline">
+			{#each events as event, i (i)}
 				<li>
 					{#if i > 0}<hr class="bg-neutral" />{/if}
 					<div class="timeline-middle">

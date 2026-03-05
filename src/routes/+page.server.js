@@ -11,23 +11,26 @@ export const actions = {
 		const deathYearStr = data.get('deathYear')?.toString();
 		const location = data.get('location')?.toString().trim();
 
+		/** Fields to return on validation failure so the form preserves user input. */
+		const fields = { name, birthYear: birthYearStr, deathYear: deathYearStr, location };
+
 		if (!name || !birthYearStr || !deathYearStr || !location) {
-			return fail(400, { error: 'Name, birth year, death year, and location are all required.' });
+			return fail(400, { error: 'Name, birth year, death year, and location are all required.', ...fields });
 		}
 
 		const birthYear = parseInt(birthYearStr, 10);
 		const deathYear = parseInt(deathYearStr, 10);
 
 		if (isNaN(birthYear) || isNaN(deathYear)) {
-			return fail(400, { error: 'Birth and death years must be valid numbers.' });
+			return fail(400, { error: 'Birth and death years must be valid numbers.', ...fields });
 		}
 
 		if (birthYear >= deathYear) {
-			return fail(400, { error: 'Death year must be after birth year.' });
+			return fail(400, { error: 'Death year must be after birth year.', ...fields });
 		}
 
 		if (deathYear - birthYear > 150) {
-			return fail(400, { error: 'Lifespan cannot exceed 150 years.' });
+			return fail(400, { error: 'Lifespan cannot exceed 150 years.', ...fields });
 		}
 
 		const character = { name, birthYear, deathYear, location };

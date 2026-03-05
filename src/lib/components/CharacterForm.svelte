@@ -1,9 +1,18 @@
 <script>
 	import { enhance } from '$app/forms';
-	let { loading = false, onsubmit, oncomplete } = $props();
+	let { loading = false, form = null, onsubmit, oncomplete } = $props();
+	let validationError = $state('');
 </script>
 
-<form method="POST" class="card bg-base-200 border border-neutral" use:enhance={() => {
+<form method="POST" action="/" class="card bg-base-200 border border-neutral" use:enhance={({ cancel, formElement }) => {
+	const birth = Number(formElement.querySelector('[name="birthYear"]')?.value);
+	const death = Number(formElement.querySelector('[name="deathYear"]')?.value);
+	if (birth && death && death <= birth) {
+		validationError = 'Death year must be after birth year.';
+		cancel();
+		return;
+	}
+	validationError = '';
 	onsubmit?.();
 	return async ({ update }) => {
 		await update();
@@ -17,22 +26,22 @@
 		<div class="grid grid-cols-2 gap-4 mb-4">
 			<div class="col-span-2">
 				<label for="name" class="label text-sm font-semibold">Character Name</label>
-				<input type="text" id="name" name="name" required placeholder="e.g. Eleanor Ashworth" class="input input-bordered w-full bg-base-100" />
+				<input type="text" id="name" name="name" required placeholder="e.g. Eleanor Ashworth" value={form?.name ?? ''} class="input input-bordered w-full bg-base-100" />
 			</div>
 
 			<div>
 				<label for="birthYear" class="label text-sm font-semibold">Born</label>
-				<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" placeholder="e.g. 1820" class="input input-bordered w-full bg-base-100" />
+				<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" placeholder="e.g. 1820" value={form?.birthYear ?? ''} class="input input-bordered w-full bg-base-100" />
 			</div>
 
 			<div>
 				<label for="deathYear" class="label text-sm font-semibold">Died</label>
-				<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" placeholder="e.g. 1895" class="input input-bordered w-full bg-base-100" />
+				<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" placeholder="e.g. 1895" value={form?.deathYear ?? ''} class="input input-bordered w-full bg-base-100" />
 			</div>
 
 			<div class="col-span-2">
 				<label for="location" class="label text-sm font-semibold">Location</label>
-				<input type="text" id="location" name="location" required placeholder="e.g. London, England" list="location-suggestions" class="input input-bordered w-full bg-base-100" />
+				<input type="text" id="location" name="location" required placeholder="e.g. London, England" value={form?.location ?? ''} list="location-suggestions" class="input input-bordered w-full bg-base-100" />
 				<datalist id="location-suggestions">
 					<option value="London, England"></option>
 					<option value="Paris, France"></option>
@@ -71,9 +80,15 @@
 			</div>
 		</div>
 
+		{#if validationError}
+			<div role="alert" class="alert alert-error text-sm py-2 mb-2">
+				<span>{validationError}</span>
+			</div>
+		{/if}
+
 		<button type="submit" class="btn btn-primary w-full font-serif text-base tracking-wide" disabled={loading}>
 			{#if loading}
-				<span class="loading loading-spinner"></span>
+				<span class="loading loading-spinner" aria-hidden="true"></span>
 				Consulting the archives…
 			{:else}
 				Chronicle This Life
