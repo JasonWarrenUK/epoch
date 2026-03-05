@@ -1,4 +1,46 @@
-const BASE_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday';
+const ON_THIS_DAY_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday';
+const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
+const USER_AGENT = 'GrandChronicle/0.1 (educational project)';
+
+/**
+ * Maps location input terms to the Wikipedia country name used in
+ * year-article titles (e.g. "1066 in England").
+ * Keys are lowercase; values are title-case as used in Wikipedia.
+ * @type {Record<string, string>}
+ */
+const LOCATION_TO_WIKI_COUNTRY = {
+	'england': 'England', 'london': 'England', 'britain': 'England',
+	'westminster': 'England', 'canterbury': 'England', 'york': 'England',
+	'winchester': 'England', 'united kingdom': 'England', 'uk': 'England',
+	'scotland': 'Scotland', 'edinburgh': 'Scotland', 'glasgow': 'Scotland',
+	'wales': 'Wales', 'cardiff': 'Wales',
+	'ireland': 'Ireland', 'dublin': 'Ireland',
+	'france': 'France', 'paris': 'France', 'normandy': 'France',
+	'germany': 'Germany', 'berlin': 'Germany', 'prussia': 'Germany',
+	'italy': 'Italy', 'rome': 'Italy', 'florence': 'Italy',
+	'venice': 'Italy', 'naples': 'Italy',
+	'spain': 'Spain', 'madrid': 'Spain', 'castile': 'Spain',
+	'portugal': 'Portugal', 'lisbon': 'Portugal',
+	'netherlands': 'the_Netherlands', 'holland': 'the_Netherlands',
+	'amsterdam': 'the_Netherlands',
+	'russia': 'Russia', 'moscow': 'Russia',
+	'greece': 'Greece', 'athens': 'Greece',
+	'poland': 'Poland', 'warsaw': 'Poland',
+	'austria': 'Austria', 'vienna': 'Austria',
+	'hungary': 'Hungary', 'budapest': 'Hungary',
+	'sweden': 'Sweden', 'stockholm': 'Sweden',
+	'norway': 'Norway', 'denmark': 'Denmark',
+	'turkey': 'Turkey', 'istanbul': 'Turkey',
+	'china': 'China', 'beijing': 'China',
+	'japan': 'Japan', 'tokyo': 'Japan',
+	'india': 'India', 'delhi': 'India',
+	'united states': 'the_United_States', 'usa': 'the_United_States',
+	'america': 'the_United_States', 'us': 'the_United_States',
+	'new york': 'the_United_States', 'washington': 'the_United_States',
+	'canada': 'Canada', 'australia': 'Australia',
+	'mexico': 'Mexico', 'brazil': 'Brazil',
+	'egypt': 'Egypt', 'cairo': 'Egypt',
+};
 
 /**
  * Common geographic aliases — maps location terms to additional search terms.
@@ -179,18 +221,35 @@ function generateDateSamples() {
 export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	const locationTerms = expandLocationTerms(location);
 
-	// Sample dates spread across the calendar year (~every 5 days)
-	const dateSamples = generateDateSamples();
+	// ── Source 1: Year articles (primary, more comprehensive) ──────────
+	const yearArticleEventsPromise = fetchEventsFromYearArticles(birthYear, deathYear, location);
 
-	const results = await Promise.allSettled(
+	// ── Source 2: "On This Day" API (supplementary) ───────────────────
+	const dateSamples = generateDateSamples();
+	const onThisDayPromise = Promise.allSettled(
 		dateSamples.map(([month, day]) => fetchOnThisDay(month, day))
 	);
+
+	// Run both sources in parallel
+	const [yearArticleEvents, onThisDayResults] = await Promise.all([
+		yearArticleEventsPromise,
+		onThisDayPromise,
+	]);
 
 	/** @type {import('./types.js').HistoricalEvent[]} */
 	const events = [];
 	const seen = new Set();
 
-	for (const result of results) {
+	// Add year-article events first (higher quality, more relevant)
+	for (const event of yearArticleEvents) {
+		const key = `${event.year}:${event.text.slice(0, 60)}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		events.push(event);
+	}
+
+	// Add "On This Day" events that aren't duplicates
+	for (const result of onThisDayResults) {
 		if (result.status !== 'fulfilled') continue;
 
 		for (const event of result.value) {
@@ -216,6 +275,217 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 }
 
 /**
+ * Resolve the user's location input to a Wikipedia country name
+ * for year-article lookups (e.g. "London, England" → "England").
+ *
+ * @param {string} location
+ * @returns {string | null}
+ */
+function resolveWikiCountry(location) {
+	const parts = location.toLowerCase().split(/,\s*/).map(s => s.trim()).filter(Boolean);
+	for (const part of parts) {
+		if (LOCATION_TO_WIKI_COUNTRY[part]) return LOCATION_TO_WIKI_COUNTRY[part];
+	}
+	// Try individual words as well
+	for (const part of parts) {
+		for (const word of part.split(/\s+/)) {
+			if (LOCATION_TO_WIKI_COUNTRY[word]) return LOCATION_TO_WIKI_COUNTRY[word];
+		}
+	}
+	return null;
+}
+
+/**
+ * Parse HTML from MediaWiki's parse API to extract event entries.
+ * Year articles typically have `<ul><li>` lists in their Events section.
+ *
+ * @param {string} html
+ * @param {number} year
+ * @returns {import('./types.js').HistoricalEvent[]}
+ */
+function parseYearArticleEvents(html, year) {
+	/** @type {import('./types.js').HistoricalEvent[]} */
+	const events = [];
+
+	// Match each <li> element (non-greedy to handle nested content)
+	const liPattern = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+	let match;
+
+	while ((match = liPattern.exec(html)) !== null) {
+		const liHtml = match[1];
+
+		// Skip nested lists (sub-items within a list item)
+		if (/<ul/i.test(liHtml)) continue;
+
+		// Extract the first link's title and href for the "Read more" feature
+		const linkMatch = liHtml.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
+		const pageTitle = linkMatch ? decodeURIComponent(linkMatch[1]).replace(/_/g, ' ') : undefined;
+		const pageUrl = linkMatch
+			? `https://en.wikipedia.org/wiki/${linkMatch[1]}`
+			: undefined;
+
+		// Strip HTML tags to get plain text
+		const text = liHtml
+			.replace(/<[^>]+>/g, '')
+			.replace(/&nbsp;/g, ' ')
+			.replace(/&ndash;/g, '–')
+			.replace(/&mdash;/g, '—')
+			.replace(/&amp;/g, '&')
+			.replace(/&#\d+;/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+
+		if (text.length < 10) continue; // Skip trivially short entries
+
+		events.push({ year, text, pageTitle, pageUrl });
+	}
+
+	return events;
+}
+
+/**
+ * Find the Events section index in a MediaWiki article's sections list.
+ *
+ * @param {string} pageTitle
+ * @returns {Promise<number | null>}
+ */
+async function findEventsSection(pageTitle) {
+	const params = new URLSearchParams({
+		action: 'parse',
+		page: pageTitle,
+		prop: 'sections',
+		format: 'json',
+		redirects: '1',
+	});
+	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+		headers: { 'User-Agent': USER_AGENT }
+	});
+	if (!res.ok) return null;
+
+	const data = await res.json();
+	if (data.error) return null;
+
+	const sections = data.parse?.sections || [];
+	const eventsSection = sections.find(
+		(/** @type {{line: string}} */ s) => /^events$/i.test(s.line)
+	);
+	return eventsSection ? Number(eventsSection.index) : null;
+}
+
+/**
+ * Fetch and parse events from a Wikipedia year article.
+ *
+ * @param {number} year
+ * @param {string | null} wikiCountry
+ * @returns {Promise<{events: import('./types.js').HistoricalEvent[], fromCountryArticle: boolean}>}
+ */
+async function fetchYearArticleEvents(year, wikiCountry) {
+	// Try country-specific article first (e.g. "1066 in England")
+	if (wikiCountry) {
+		const countryTitle = `${year}_in_${wikiCountry}`;
+		const sectionIdx = await findEventsSection(countryTitle);
+		if (sectionIdx !== null) {
+			const events = await fetchParsedSection(countryTitle, sectionIdx, year);
+			if (events.length > 0) {
+				return { events, fromCountryArticle: true };
+			}
+		}
+	}
+
+	// Fall back to generic year article (e.g. "1066")
+	const yearTitle = String(year);
+	const sectionIdx = await findEventsSection(yearTitle);
+	if (sectionIdx !== null) {
+		const events = await fetchParsedSection(yearTitle, sectionIdx, year);
+		return { events, fromCountryArticle: false };
+	}
+
+	return { events: [], fromCountryArticle: false };
+}
+
+/**
+ * Fetch a specific section's parsed HTML from a Wikipedia article.
+ *
+ * @param {string} pageTitle
+ * @param {number} sectionIndex
+ * @param {number} year
+ * @returns {Promise<import('./types.js').HistoricalEvent[]>}
+ */
+async function fetchParsedSection(pageTitle, sectionIndex, year) {
+	const params = new URLSearchParams({
+		action: 'parse',
+		page: pageTitle,
+		prop: 'text',
+		section: String(sectionIndex),
+		format: 'json',
+		redirects: '1',
+	});
+	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+		headers: { 'User-Agent': USER_AGENT }
+	});
+	if (!res.ok) return [];
+
+	const data = await res.json();
+	if (data.error) return [];
+
+	const html = data.parse?.text?.['*'] || '';
+	return parseYearArticleEvents(html, year);
+}
+
+/**
+ * Fetch events from Wikipedia year articles for every year in the character's
+ * lifetime. Batches requests to avoid overwhelming the API.
+ *
+ * @param {number} birthYear
+ * @param {number} deathYear
+ * @param {string} location
+ * @returns {Promise<import('./types.js').HistoricalEvent[]>}
+ */
+async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
+	const wikiCountry = resolveWikiCountry(location);
+	const locationTerms = expandLocationTerms(location);
+
+	/** @type {import('./types.js').HistoricalEvent[]} */
+	const allEvents = [];
+
+	const years = [];
+	for (let y = birthYear; y <= deathYear; y++) years.push(y);
+
+	// Process in batches to respect API rate limits
+	const BATCH_SIZE = 10;
+	for (let i = 0; i < years.length; i += BATCH_SIZE) {
+		const batch = years.slice(i, i + BATCH_SIZE);
+		const results = await Promise.allSettled(
+			batch.map(year => fetchYearArticleEvents(year, wikiCountry))
+		);
+
+		for (let j = 0; j < results.length; j++) {
+			const result = results[j];
+			if (result.status !== 'fulfilled') continue;
+
+			const { events, fromCountryArticle } = result.value;
+			for (const event of events) {
+				// Country-specific articles are already location-filtered.
+				// Generic year articles need location matching.
+				if (!fromCountryArticle) {
+					const pseudoRawEvent = { text: event.text, pages: [] };
+					if (!eventMatchesLocation(pseudoRawEvent, locationTerms)) continue;
+				}
+				event.characterAge = event.year - birthYear;
+				allEvents.push(event);
+			}
+		}
+
+		// Small delay between batches to be polite to the API
+		if (i + BATCH_SIZE < years.length) {
+			await new Promise(r => setTimeout(r, 100));
+		}
+	}
+
+	return allEvents;
+}
+
+/**
  * @typedef {Object} RawEvent
  * @property {number} year
  * @property {string} text
@@ -228,9 +498,9 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
  * @returns {Promise<RawEvent[]>}
  */
 async function fetchOnThisDay(month, day) {
-	const url = `${BASE_URL}/events/${month}/${day}`;
+	const url = `${ON_THIS_DAY_URL}/events/${month}/${day}`;
 	const res = await fetch(url, {
-		headers: { 'User-Agent': 'GrandChronicle/0.1 (educational project)' }
+		headers: { 'User-Agent': USER_AGENT }
 	});
 
 	if (!res.ok) return [];
