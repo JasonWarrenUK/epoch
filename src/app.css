@@ -1,0 +1,41 @@
+:root {
+	--color-bg: #0f0f0f;
+	--color-surface: #1a1a2e;
+	--color-surface-alt: #16213e;
+	--color-accent: #e2b553;
+	--color-accent-dim: #b8922e;
+	--color-text: #e8e8e8;
+	--color-text-muted: #999;
+	--color-timeline: #3a3a5c;
+	--font-serif: 'Georgia', 'Times New Roman', serif;
+	--font-sans: system-ui, -apple-system, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	font-size: 16px;
+}
+
+body {
+	font-family: var(--font-sans);
+	background-color: var(--color-bg);
+	color: var(--color-text);
+	line-height: 1.6;
+	min-height: 100vh;
+}
+
+a {
+	color: var(--color-accent);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
