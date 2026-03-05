@@ -6,24 +6,63 @@ const BASE_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday';
  * @type {Record<string, string[]>}
  */
 const LOCATION_ALIASES = {
-	'england': ['english', 'britain', 'british', 'united kingdom', 'uk', 'london', 'parliament'],
-	'britain': ['british', 'england', 'english', 'united kingdom', 'uk', 'scotland', 'wales'],
+	// ── England & Britain (MVP focus) ──────────────────────────────────
+	'england': [
+		'english', 'britain', 'british', 'united kingdom', 'uk',
+		// Major cities & seats of power
+		'london', 'westminster', 'canterbury', 'york', 'winchester',
+		'oxford', 'cambridge', 'bristol', 'norwich', 'lincoln',
+		'durham', 'chester', 'bath', 'exeter', 'gloucester',
+		'worcester', 'salisbury', 'coventry', 'nottingham', 'leicester',
+		'dover', 'hastings', 'shrewsbury', 'warwick', 'stafford',
+		// Regions & historical kingdoms
+		'wessex', 'mercia', 'northumbria', 'east anglia', 'kent',
+		'sussex', 'essex', 'cornwall', 'devon', 'yorkshire',
+		'lancashire', 'norfolk', 'suffolk', 'somerset', 'surrey',
+		// Historical & cultural terms
+		'anglo-saxon', 'anglo-norman', 'norman', 'plantagenet',
+		'tudor', 'stuart', 'angevin', 'danelaw',
+		'parliament', 'magna carta',
+		'archbishop of canterbury', 'tower of london',
+		'king of england', 'queen of england',
+	],
+	'london': [
+		'england', 'english', 'britain', 'british',
+		'westminster', 'tower of london', 'parliament',
+	],
+	'britain': [
+		'british', 'england', 'english', 'united kingdom', 'uk',
+		'scotland', 'scottish', 'wales', 'welsh',
+	],
 	'united kingdom': ['uk', 'britain', 'british', 'england', 'english', 'scotland', 'wales'],
 	'uk': ['united kingdom', 'britain', 'british', 'england', 'english'],
-	'scotland': ['scottish', 'britain', 'british', 'united kingdom'],
-	'wales': ['welsh', 'britain', 'british', 'united kingdom'],
-	'ireland': ['irish'],
-	'france': ['french', 'paris'],
-	'germany': ['german', 'prussian', 'prussia', 'berlin'],
+	'scotland': ['scottish', 'britain', 'british', 'united kingdom', 'edinburgh', 'glasgow'],
+	'wales': ['welsh', 'britain', 'british', 'united kingdom', 'cardiff'],
+	'ireland': ['irish', 'dublin'],
+
+	// ── Continental Europe ─────────────────────────────────────────────
+	'france': ['french', 'paris', 'normandy', 'norman', 'burgundy', 'aquitaine'],
+	'germany': ['german', 'prussian', 'prussia', 'berlin', 'holy roman empire'],
 	'prussia': ['prussian', 'germany', 'german'],
-	'italy': ['italian', 'rome', 'roman'],
-	'spain': ['spanish', 'madrid'],
+	'italy': ['italian', 'rome', 'roman', 'venice', 'venetian', 'florence', 'naples', 'papal'],
+	'spain': ['spanish', 'madrid', 'castile', 'castilian', 'aragon'],
 	'portugal': ['portuguese', 'lisbon'],
 	'netherlands': ['dutch', 'holland', 'amsterdam'],
 	'holland': ['dutch', 'netherlands'],
 	'russia': ['russian', 'soviet', 'moscow', 'ussr'],
 	'soviet union': ['soviet', 'russian', 'russia', 'ussr'],
 	'ussr': ['soviet', 'russian', 'russia', 'soviet union'],
+	'greece': ['greek', 'athens', 'byzantine', 'byzantium'],
+	'poland': ['polish', 'warsaw'],
+	'austria': ['austrian', 'vienna', 'habsburg', 'austro-hungarian'],
+	'hungary': ['hungarian', 'budapest', 'austro-hungarian'],
+	'sweden': ['swedish', 'stockholm'],
+	'norway': ['norwegian'],
+	'denmark': ['danish'],
+	'turkey': ['turkish', 'ottoman', 'istanbul', 'constantinople'],
+	'ottoman': ['ottoman empire', 'turkey', 'turkish'],
+
+	// ── Rest of world ──────────────────────────────────────────────────
 	'china': ['chinese', 'beijing', 'peking'],
 	'japan': ['japanese', 'tokyo', 'edo'],
 	'india': ['indian', 'delhi', 'mumbai', 'bombay', 'calcutta'],
@@ -36,22 +75,14 @@ const LOCATION_ALIASES = {
 	'mexico': ['mexican'],
 	'brazil': ['brazilian'],
 	'egypt': ['egyptian', 'cairo'],
-	'turkey': ['turkish', 'ottoman', 'istanbul', 'constantinople'],
-	'ottoman': ['ottoman empire', 'turkey', 'turkish'],
-	'greece': ['greek', 'athens'],
-	'poland': ['polish', 'warsaw'],
-	'austria': ['austrian', 'vienna', 'habsburg', 'austro-hungarian'],
-	'hungary': ['hungarian', 'budapest', 'austro-hungarian'],
-	'sweden': ['swedish', 'stockholm'],
-	'norway': ['norwegian'],
-	'denmark': ['danish'],
 	'africa': ['african'],
 	'asia': ['asian'],
 	'europe': ['european'],
-	'london': ['england', 'english', 'britain', 'british'],
+
+	// ── City shortcuts ─────────────────────────────────────────────────
 	'paris': ['france', 'french'],
 	'berlin': ['germany', 'german'],
-	'rome': ['italy', 'italian', 'roman'],
+	'rome': ['italy', 'italian', 'roman', 'papal'],
 	'new york': ['american', 'united states'],
 	'washington': ['american', 'united states'],
 	'tokyo': ['japan', 'japanese'],
@@ -104,15 +135,35 @@ function expandLocationTerms(location) {
  * @returns {boolean}
  */
 function eventMatchesLocation(event, locationTerms) {
+	// Use event text and page titles/descriptions but NOT extracts,
+	// which are too long and cause false positives from passing mentions.
 	const searchable = [
 		event.text,
-		...(event.pages || []).flatMap(p => [p.title, p.description, p.extract].filter(Boolean))
+		...(event.pages || []).flatMap(p => [p.title, p.description].filter(Boolean))
 	].join(' ').toLowerCase();
 
 	for (const term of locationTerms) {
-		if (searchable.includes(term)) return true;
+		// Word-boundary match to avoid partial hits (e.g. "roman" in "Romanian")
+		const pattern = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+		if (pattern.test(searchable)) return true;
 	}
 	return false;
+}
+
+/**
+ * Generate date samples spread ~every 5 days across the calendar year.
+ * @returns {Array<[number, number]>}
+ */
+function generateDateSamples() {
+	const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+	/** @type {Array<[number, number]>} */
+	const samples = [];
+	for (let m = 0; m < 12; m++) {
+		for (let d = 1; d <= daysInMonth[m]; d += 5) {
+			samples.push([m + 1, d]);
+		}
+	}
+	return samples;
 }
 
 /**
@@ -128,11 +179,8 @@ function eventMatchesLocation(event, locationTerms) {
 export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	const locationTerms = expandLocationTerms(location);
 
-	// Sample dates spread across the calendar year
-	const dateSamples = [
-		[1, 15], [2, 12], [3, 21], [4, 9], [5, 18], [6, 28],
-		[7, 4], [8, 6], [9, 1], [10, 14], [11, 9], [12, 25]
-	];
+	// Sample dates spread across the calendar year (~every 5 days)
+	const dateSamples = generateDateSamples();
 
 	const results = await Promise.allSettled(
 		dateSamples.map(([month, day]) => fetchOnThisDay(month, day))
