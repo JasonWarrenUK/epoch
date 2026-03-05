@@ -1,41 +1,30 @@
-:root {
-	--color-bg: #0f0f0f;
-	--color-surface: #1a1a2e;
-	--color-surface-alt: #16213e;
-	--color-accent: #e2b553;
-	--color-accent-dim: #b8922e;
-	--color-text: #e8e8e8;
-	--color-text-muted: #999;
-	--color-timeline: #3a3a5c;
+@import "tailwindcss";
+@plugin "daisyui" {
+	themes: grand-chronicle --default
+}
+
+@theme {
 	--font-serif: 'Georgia', 'Times New Roman', serif;
 	--font-sans: system-ui, -apple-system, sans-serif;
 }
 
-*,
-*::before,
-*::after {
-	box-sizing: border-box;
-	margin: 0;
-	padding: 0;
-}
-
-html {
-	font-size: 16px;
-}
-
-body {
-	font-family: var(--font-sans);
-	background-color: var(--color-bg);
-	color: var(--color-text);
-	line-height: 1.6;
-	min-height: 100vh;
-}
-
-a {
-	color: var(--color-accent);
-	text-decoration: none;
-}
-
-a:hover {
-	text-decoration: underline;
+@plugin "daisyui/theme" {
+	name: "grand-chronicle";
+	default: true;
+	color-scheme: dark;
+	--color-base-100: #0f0f0f;
+	--color-base-200: #1a1a2e;
+	--color-base-300: #16213e;
+	--color-base-content: #e8e8e8;
+	--color-primary: #e2b553;
+	--color-primary-content: #0f0f0f;
+	--color-secondary: #b8922e;
+	--color-secondary-content: #0f0f0f;
+	--color-neutral: #3a3a5c;
+	--color-neutral-content: #999999;
+	--color-error: #ff8888;
+	--color-error-content: #3a1111;
+	--radius-btn: 0.3rem;
+	--radius-box: 0.5rem;
+	--radius-field: 0.3rem;
 }

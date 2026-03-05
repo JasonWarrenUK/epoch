@@ -11,16 +11,18 @@
 	<meta name="description" content="Create fictional characters who experience real historical events." />
 </svelte:head>
 
-<section class="hero">
-	<img src="/banner.webp" alt="Grand Chronicle banner" class="banner" />
-	<p class="tagline">
+<section class="text-center mb-8">
+	<img src="/banner.webp" alt="Grand Chronicle banner" class="w-full max-h-70 object-cover rounded-box mb-4 border border-neutral" />
+	<p class="font-serif text-lg text-neutral-content max-w-[36rem] mx-auto leading-relaxed">
 		Create fictional characters who experience real historical events.
 		Discover the world they would have known.
 	</p>
 </section>
 
 {#if form?.error}
-	<div class="error">{form.error}</div>
+	<div role="alert" class="alert alert-error mb-4">
+		<span>{form.error}</span>
+	</div>
 {/if}
 
 <CharacterForm
@@ -32,38 +34,3 @@
 {#if form?.character && form?.events}
 	<Timeline character={form.character} events={form.events} />
 {/if}
-
-<style>
-	.hero {
-		text-align: center;
-		margin-bottom: 2rem;
-	}
-
-	.banner {
-		width: 100%;
-		max-height: 280px;
-		object-fit: cover;
-		border-radius: 0.5rem;
-		margin-bottom: 1rem;
-		border: 1px solid var(--color-timeline);
-	}
-
-	.tagline {
-		font-family: var(--font-serif);
-		font-size: 1.1rem;
-		color: var(--color-text-muted);
-		max-width: 36rem;
-		margin: 0 auto;
-		line-height: 1.6;
-	}
-
-	.error {
-		background: #3a1111;
-		border: 1px solid #7a2222;
-		color: #ff8888;
-		padding: 0.75rem 1rem;
-		border-radius: 0.3rem;
-		margin-bottom: 1rem;
-		font-size: 0.9rem;
-	}
-</style>
