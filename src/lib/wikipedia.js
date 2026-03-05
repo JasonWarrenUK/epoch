@@ -104,13 +104,17 @@ function expandLocationTerms(location) {
  * @returns {boolean}
  */
 function eventMatchesLocation(event, locationTerms) {
+	// Use event text and page titles/descriptions but NOT extracts,
+	// which are too long and cause false positives from passing mentions.
 	const searchable = [
 		event.text,
-		...(event.pages || []).flatMap(p => [p.title, p.description, p.extract].filter(Boolean))
+		...(event.pages || []).flatMap(p => [p.title, p.description].filter(Boolean))
 	].join(' ').toLowerCase();
 
 	for (const term of locationTerms) {
-		if (searchable.includes(term)) return true;
+		// Word-boundary match to avoid partial hits (e.g. "roman" in "Romanian")
+		const pattern = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+		if (pattern.test(searchable)) return true;
 	}
 	return false;
 }
@@ -128,10 +132,20 @@ function eventMatchesLocation(event, locationTerms) {
 export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	const locationTerms = expandLocationTerms(location);
 
-	// Sample dates spread across the calendar year
+	// Sample dates spread across the calendar year (~every 10 days)
 	const dateSamples = [
-		[1, 15], [2, 12], [3, 21], [4, 9], [5, 18], [6, 28],
-		[7, 4], [8, 6], [9, 1], [10, 14], [11, 9], [12, 25]
+		[1, 3], [1, 13], [1, 23],
+		[2, 2], [2, 12], [2, 22],
+		[3, 4], [3, 14], [3, 24],
+		[4, 3], [4, 13], [4, 23],
+		[5, 3], [5, 13], [5, 23],
+		[6, 2], [6, 12], [6, 22],
+		[7, 2], [7, 12], [7, 22],
+		[8, 1], [8, 11], [8, 21],
+		[9, 1], [9, 11], [9, 21],
+		[10, 1], [10, 11], [10, 21],
+		[11, 1], [11, 11], [11, 21],
+		[12, 1], [12, 11], [12, 21]
 	];
 
 	const results = await Promise.allSettled(

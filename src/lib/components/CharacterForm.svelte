@@ -31,7 +31,42 @@
 
 		<div class="field full">
 			<label for="location">Location</label>
-			<input type="text" id="location" name="location" required placeholder="e.g. London, England" />
+			<input type="text" id="location" name="location" required placeholder="e.g. London, England" list="location-suggestions" />
+			<datalist id="location-suggestions">
+				<option value="London, England" />
+				<option value="Paris, France" />
+				<option value="Rome, Italy" />
+				<option value="Berlin, Germany" />
+				<option value="Vienna, Austria" />
+				<option value="Moscow, Russia" />
+				<option value="Constantinople, Turkey" />
+				<option value="Istanbul, Turkey" />
+				<option value="Beijing, China" />
+				<option value="Tokyo, Japan" />
+				<option value="Delhi, India" />
+				<option value="Cairo, Egypt" />
+				<option value="New York, United States" />
+				<option value="Washington, United States" />
+				<option value="England" />
+				<option value="France" />
+				<option value="Germany" />
+				<option value="Italy" />
+				<option value="Spain" />
+				<option value="Portugal" />
+				<option value="Netherlands" />
+				<option value="Russia" />
+				<option value="China" />
+				<option value="Japan" />
+				<option value="India" />
+				<option value="United States" />
+				<option value="Scotland" />
+				<option value="Ireland" />
+				<option value="Greece" />
+				<option value="Poland" />
+				<option value="Sweden" />
+				<option value="Norway" />
+				<option value="Denmark" />
+			</datalist>
 		</div>
 	</div>
 
