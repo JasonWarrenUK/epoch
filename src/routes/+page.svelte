@@ -4,34 +4,39 @@
 
 	let { form } = $props();
 	let loading = $state(false);
+	let hasResults = $derived(form?.character && form?.events);
 </script>
 
 <svelte:head>
-	<title>Grand Chronicle</title>
+	<title>Epoch</title>
 	<meta name="description" content="Create fictional characters who experience real historical events." />
 </svelte:head>
 
-<section class="text-center mb-8">
-	<img src="/banner.webp" alt="Grand Chronicle banner" class="w-full max-h-72 object-cover rounded-box mb-4 border border-neutral" />
-	<p class="font-serif text-lg text-neutral-content max-w-[36rem] mx-auto leading-relaxed">
-		Create fictional characters who experience real historical events.
-		Discover the world they would have known.
-	</p>
-</section>
+{#if !hasResults}
+	<section class="max-w-[40rem] mx-auto text-center mb-12 animate-fade-in">
+		<p class="font-serif text-xl text-neutral-content leading-relaxed">
+			Create fictional characters who experience real historical events.
+			Discover the world they would have known.
+		</p>
+	</section>
+{/if}
 
 {#if form?.error}
-	<div role="alert" class="alert alert-error mb-4">
+	<div role="alert" class="alert alert-error mb-6 max-w-[40rem] mx-auto">
 		<span>{form.error}</span>
 	</div>
 {/if}
 
-<CharacterForm
-	{loading}
-	{form}
-	onsubmit={() => loading = true}
-	oncomplete={() => loading = false}
-/>
+<div class={hasResults ? 'max-w-[40rem] mx-auto mb-12' : 'max-w-[40rem] mx-auto'}>
+	<CharacterForm
+		{loading}
+		{form}
+		collapsed={hasResults}
+		onsubmit={() => loading = true}
+		oncomplete={() => loading = false}
+	/>
+</div>
 
-{#if form?.character && form?.events}
+{#if hasResults}
 	<Timeline character={form.character} events={form.events} />
 {/if}
