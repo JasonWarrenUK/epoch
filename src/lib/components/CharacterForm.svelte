@@ -1,161 +1,98 @@
 <script>
 	import { enhance } from '$app/forms';
-	let { loading = false, onsubmit, oncomplete } = $props();
+	let { loading = false, form = null, onsubmit, oncomplete } = $props();
+	let validationError = $state('');
 </script>
 
-<form method="POST" class="character-form" use:enhance={() => {
+<form method="POST" action="/" class="card bg-base-200 border border-neutral" use:enhance={({ cancel, formElement }) => {
+	const birth = Number(formElement.querySelector('[name="birthYear"]')?.value);
+	const death = Number(formElement.querySelector('[name="deathYear"]')?.value);
+	if (birth && death && death <= birth) {
+		validationError = 'Death year must be after birth year.';
+		cancel();
+		return;
+	}
+	validationError = '';
 	onsubmit?.();
 	return async ({ update }) => {
 		await update();
 		oncomplete?.();
 	};
 }}>
-	<h2>Create Your Character</h2>
-	<p class="subtitle">Give your character a name and a lifetime, and discover the history they would have lived through.</p>
+	<div class="card-body">
+		<h2 class="card-title font-serif text-primary text-2xl">Create Your Character</h2>
+		<p class="text-sm text-neutral-content mb-4">Give your character a name and a lifetime, and discover the history they would have lived through.</p>
 
-	<div class="fields">
-		<div class="field full">
-			<label for="name">Character Name</label>
-			<input type="text" id="name" name="name" required placeholder="e.g. Eleanor Ashworth" />
+		<div class="grid grid-cols-2 gap-4 mb-4">
+			<div class="col-span-2">
+				<label for="name" class="label text-sm font-semibold">Character Name</label>
+				<input type="text" id="name" name="name" required placeholder="e.g. Eleanor Ashworth" value={form?.name ?? ''} class="input input-bordered w-full bg-base-100" />
+			</div>
+
+			<div>
+				<label for="birthYear" class="label text-sm font-semibold">Born</label>
+				<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" placeholder="e.g. 1820" value={form?.birthYear ?? ''} class="input input-bordered w-full bg-base-100" />
+			</div>
+
+			<div>
+				<label for="deathYear" class="label text-sm font-semibold">Died</label>
+				<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" placeholder="e.g. 1895" value={form?.deathYear ?? ''} class="input input-bordered w-full bg-base-100" />
+			</div>
+
+			<div class="col-span-2">
+				<label for="location" class="label text-sm font-semibold">Location</label>
+				<input type="text" id="location" name="location" required placeholder="e.g. London, England" value={form?.location ?? ''} list="location-suggestions" class="input input-bordered w-full bg-base-100" />
+				<datalist id="location-suggestions">
+					<option value="London, England"></option>
+					<option value="Paris, France"></option>
+					<option value="Rome, Italy"></option>
+					<option value="Berlin, Germany"></option>
+					<option value="Vienna, Austria"></option>
+					<option value="Moscow, Russia"></option>
+					<option value="Constantinople, Turkey"></option>
+					<option value="Istanbul, Turkey"></option>
+					<option value="Beijing, China"></option>
+					<option value="Tokyo, Japan"></option>
+					<option value="Delhi, India"></option>
+					<option value="Cairo, Egypt"></option>
+					<option value="New York, United States"></option>
+					<option value="Washington, United States"></option>
+					<option value="England"></option>
+					<option value="France"></option>
+					<option value="Germany"></option>
+					<option value="Italy"></option>
+					<option value="Spain"></option>
+					<option value="Portugal"></option>
+					<option value="Netherlands"></option>
+					<option value="Russia"></option>
+					<option value="China"></option>
+					<option value="Japan"></option>
+					<option value="India"></option>
+					<option value="United States"></option>
+					<option value="Scotland"></option>
+					<option value="Ireland"></option>
+					<option value="Greece"></option>
+					<option value="Poland"></option>
+					<option value="Sweden"></option>
+					<option value="Norway"></option>
+					<option value="Denmark"></option>
+				</datalist>
+			</div>
 		</div>
 
-		<div class="field">
-			<label for="birthYear">Born</label>
-			<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" placeholder="e.g. 1820" />
-		</div>
+		{#if validationError}
+			<div role="alert" class="alert alert-error text-sm py-2 mb-2">
+				<span>{validationError}</span>
+			</div>
+		{/if}
 
-		<div class="field">
-			<label for="deathYear">Died</label>
-			<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" placeholder="e.g. 1895" />
-		</div>
-
-		<div class="field full">
-			<label for="location">Location</label>
-			<input type="text" id="location" name="location" required placeholder="e.g. London, England" list="location-suggestions" />
-			<datalist id="location-suggestions">
-				<option value="London, England" />
-				<option value="Paris, France" />
-				<option value="Rome, Italy" />
-				<option value="Berlin, Germany" />
-				<option value="Vienna, Austria" />
-				<option value="Moscow, Russia" />
-				<option value="Constantinople, Turkey" />
-				<option value="Istanbul, Turkey" />
-				<option value="Beijing, China" />
-				<option value="Tokyo, Japan" />
-				<option value="Delhi, India" />
-				<option value="Cairo, Egypt" />
-				<option value="New York, United States" />
-				<option value="Washington, United States" />
-				<option value="England" />
-				<option value="France" />
-				<option value="Germany" />
-				<option value="Italy" />
-				<option value="Spain" />
-				<option value="Portugal" />
-				<option value="Netherlands" />
-				<option value="Russia" />
-				<option value="China" />
-				<option value="Japan" />
-				<option value="India" />
-				<option value="United States" />
-				<option value="Scotland" />
-				<option value="Ireland" />
-				<option value="Greece" />
-				<option value="Poland" />
-				<option value="Sweden" />
-				<option value="Norway" />
-				<option value="Denmark" />
-			</datalist>
-		</div>
+		<button type="submit" class="btn btn-primary w-full font-serif text-base tracking-wide" disabled={loading}>
+			{#if loading}
+				<span class="loading loading-spinner" aria-hidden="true"></span>
+				Consulting the archives…
+			{:else}
+				Chronicle This Life
+			{/if}
+		</button>
 	</div>
-
-	<button type="submit" disabled={loading}>
-		{loading ? 'Consulting the archives…' : 'Chronicle This Life'}
-	</button>
 </form>
-
-<style>
-	.character-form {
-		background: var(--color-surface);
-		border: 1px solid var(--color-timeline);
-		border-radius: 0.5rem;
-		padding: 2rem;
-	}
-
-	h2 {
-		font-family: var(--font-serif);
-		color: var(--color-accent);
-		font-size: 1.5rem;
-		margin-bottom: 0.25rem;
-	}
-
-	.subtitle {
-		color: var(--color-text-muted);
-		font-size: 0.9rem;
-		margin-bottom: 1.5rem;
-	}
-
-	.fields {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
-		margin-bottom: 1.5rem;
-	}
-
-	.field.full {
-		grid-column: 1 / -1;
-	}
-
-	label {
-		display: block;
-		font-size: 0.85rem;
-		font-weight: 600;
-		margin-bottom: 0.3rem;
-		color: var(--color-text);
-	}
-
-	input {
-		width: 100%;
-		padding: 0.6rem 0.75rem;
-		background: var(--color-bg);
-		border: 1px solid var(--color-timeline);
-		border-radius: 0.3rem;
-		color: var(--color-text);
-		font-size: 0.95rem;
-		font-family: var(--font-sans);
-	}
-
-	input::placeholder {
-		color: var(--color-text-muted);
-		opacity: 0.5;
-	}
-
-	input:focus {
-		outline: none;
-		border-color: var(--color-accent);
-	}
-
-	button {
-		width: 100%;
-		padding: 0.75rem;
-		background: var(--color-accent);
-		color: var(--color-bg);
-		border: none;
-		border-radius: 0.3rem;
-		font-size: 1rem;
-		font-weight: 700;
-		cursor: pointer;
-		font-family: var(--font-serif);
-		letter-spacing: 0.03em;
-	}
-
-	button:hover:not(:disabled) {
-		background: var(--color-accent-dim);
-	}
-
-	button:disabled {
-		opacity: 0.6;
-		cursor: wait;
-	}
-</style>

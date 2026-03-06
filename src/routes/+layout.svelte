@@ -3,51 +3,17 @@
 	let { children } = $props();
 </script>
 
-<header>
-	<a href="/">
-		<h1>Grand Chronicle</h1>
+<a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-primary focus:text-primary-content">Skip to content</a>
+<header class="navbar bg-base-200 border-b-2 border-secondary justify-center py-6">
+	<a href="/" class="no-underline">
+		<h1 class="text-3xl font-serif text-primary tracking-wide">Grand Chronicle</h1>
 	</a>
 </header>
 
-<main>
+<main id="main-content" class="max-w-[52rem] mx-auto px-4 py-8 min-h-[calc(100vh-12rem)]">
 	{@render children()}
 </main>
 
-<footer>
+<footer class="footer footer-center py-6 px-4 text-sm text-neutral-content border-t border-neutral">
 	<p>Grand Chronicle &mdash; Explore history through the eyes of fiction</p>
 </footer>
-
-<style>
-	header {
-		text-align: center;
-		padding: 1.5rem 1rem;
-		background: var(--color-surface);
-		border-bottom: 2px solid var(--color-accent-dim);
-	}
-
-	header a {
-		text-decoration: none;
-	}
-
-	header h1 {
-		font-family: var(--font-serif);
-		font-size: 2rem;
-		color: var(--color-accent);
-		letter-spacing: 0.05em;
-	}
-
-	main {
-		max-width: 52rem;
-		margin: 0 auto;
-		padding: 2rem 1rem;
-		min-height: calc(100vh - 12rem);
-	}
-
-	footer {
-		text-align: center;
-		padding: 1.5rem 1rem;
-		color: var(--color-text-muted);
-		font-size: 0.875rem;
-		border-top: 1px solid var(--color-timeline);
-	}
-</style>
