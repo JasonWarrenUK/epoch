@@ -1,3 +1,5 @@
+import { filterEventText } from './event-filters.js';
+
 const ON_THIS_DAY_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday';
 const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
 const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/JasonWarrenUK/epoch)';
@@ -278,13 +280,16 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 			if (event.year < birthYear || event.year > deathYear) continue;
 			if (!eventMatchesLocation(event, locationPatterns)) continue;
 
-			const key = dedup(event.year, event.text);
+			const cleanedText = filterEventText(event.text);
+			if (cleanedText === null) continue;
+
+			const key = dedup(event.year, cleanedText);
 			if (seen.has(key)) continue;
 			seen.add(key);
 
 			events.push({
 				year: event.year,
-				text: event.text,
+				text: cleanedText,
 				pageTitle: event.pages?.[0]?.title,
 				pageUrl: event.pages?.[0]?.content_urls?.desktop?.page,
 				characterAge: event.year - birthYear
@@ -385,9 +390,10 @@ function parseYearArticleEvents(html, year) {
 			.replace(/\s+/g, ' ')
 			.trim();
 
-		if (text.length < 10) continue; // Skip trivially short entries
+		const cleanedText = filterEventText(text);
+		if (cleanedText === null) continue;
 
-		events.push({ year, text, pageTitle, pageUrl });
+		events.push({ year, text: cleanedText, pageTitle, pageUrl });
 	}
 
 	return events;
