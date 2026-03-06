@@ -1,6 +1,5 @@
-import { filterEventText } from './event-filters.js';
+import { filterEventText, scoreSignificance } from './event-filters.js';
 
-const ON_THIS_DAY_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday';
 const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
 const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/JasonWarrenUK/epoch)';
 
@@ -186,17 +185,14 @@ function compileLocationPatterns(locationTerms) {
 
 /**
  * Check whether an event is geographically relevant to the location terms.
- * Searches the event text and all associated page metadata.
  *
- * @param {RawEvent} event
+ * @param {string} text     The event text to search.
+ * @param {string} [pageTitle]  Optional Wikipedia page title for extra matching.
  * @param {RegExp[]} locationPatterns  Pre-compiled patterns from compileLocationPatterns()
  * @returns {boolean}
  */
-function eventMatchesLocation(event, locationPatterns) {
-	const searchable = [
-		event.text,
-		...(event.pages || []).flatMap(p => [p.title, p.description].filter(Boolean))
-	].join(' ');
+function eventMatchesLocation(text, pageTitle, locationPatterns) {
+	const searchable = pageTitle ? `${text} ${pageTitle}` : text;
 
 	for (const pattern of locationPatterns) {
 		if (pattern.test(searchable)) return true;
@@ -205,26 +201,8 @@ function eventMatchesLocation(event, locationPatterns) {
 }
 
 /**
- * Date samples spread ~every 5 days across the calendar year.
- * Pre-computed once at module load.
- * @type {Array<[number, number]>}
- */
-const DATE_SAMPLES = (() => {
-	const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-	/** @type {Array<[number, number]>} */
-	const samples = [];
-	for (let m = 0; m < 12; m++) {
-		for (let d = 1; d <= daysInMonth[m]; d += 5) {
-			samples.push([m + 1, d]);
-		}
-	}
-	return samples;
-})();
-
-/**
- * Fetch historical events from Wikipedia's "On This Day" API for a set of
- * dates, then filter to events that fall within the character's lifetime
- * AND are geographically relevant to their location.
+ * Fetch historical events from Wikipedia year articles for a character's
+ * lifetime, filtered by location and scored by significance.
  *
  * @param {number} birthYear
  * @param {number} deathYear
@@ -237,93 +215,21 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 		return [];
 	}
 
-	const locationTerms = expandLocationTerms(location);
-	const locationPatterns = compileLocationPatterns(locationTerms);
+	const events = await fetchEventsFromYearArticles(birthYear, deathYear, location);
 
-	// ── Source 1: Year articles (primary, more comprehensive) ──────────
-	const yearArticleEventsPromise = fetchEventsFromYearArticles(birthYear, deathYear, location);
+	/** @type {Map<string, import('./types.js').HistoricalEvent>} */
+	const seen = new Map();
 
-	// ── Source 2: "On This Day" API (supplementary, batched) ──────────
-	const onThisDayPromise = fetchOnThisDayBatched();
-
-	// Run both sources in parallel
-	const [yearArticleEvents, onThisDayResults] = await Promise.all([
-		yearArticleEventsPromise,
-		onThisDayPromise,
-	]);
-
-	/** @type {import('./types.js').HistoricalEvent[]} */
-	const events = [];
-	const seen = new Set();
-
-	/**
-	 * Build a dedup key from year + normalised text.
-	 * Uses full lowercase text to avoid false collisions on prefix matches.
-	 * @param {number} year
-	 * @param {string} text
-	 */
-	const dedup = (year, text) => `${year}:${text.toLowerCase().trim()}`;
-
-	// Add year-article events first (higher quality, more relevant)
-	for (const event of yearArticleEvents) {
-		const key = dedup(event.year, event.text);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		events.push(event);
+	for (const event of events) {
+		const key = `${event.year}:${event.text.toLowerCase().trim()}`;
+		if (!seen.has(key)) seen.set(key, event);
 	}
 
-	// Add "On This Day" events that aren't duplicates
-	for (const result of onThisDayResults) {
-		if (result.status !== 'fulfilled') continue;
-
-		for (const event of result.value) {
-			if (event.year < birthYear || event.year > deathYear) continue;
-			if (!eventMatchesLocation(event, locationPatterns)) continue;
-
-			const cleanedText = filterEventText(event.text);
-			if (cleanedText === null) continue;
-
-			const key = dedup(event.year, cleanedText);
-			if (seen.has(key)) continue;
-			seen.add(key);
-
-			events.push({
-				year: event.year,
-				text: cleanedText,
-				pageTitle: event.pages?.[0]?.title,
-				pageUrl: event.pages?.[0]?.content_urls?.desktop?.page,
-				characterAge: event.year - birthYear
-			});
-		}
-	}
-
-	events.sort((a, b) => a.year - b.year);
-	return events;
+	const deduped = [...seen.values()];
+	deduped.sort((a, b) => a.year - b.year);
+	return deduped;
 }
 
-/**
- * Fetch all "On This Day" date samples in batches to avoid rate-limiting.
- * @returns {Promise<PromiseSettledResult<RawEvent[]>[]>}
- */
-async function fetchOnThisDayBatched() {
-	const BATCH_SIZE = 10;
-	/** @type {PromiseSettledResult<RawEvent[]>[]} */
-	const allResults = [];
-
-	for (let i = 0; i < DATE_SAMPLES.length; i += BATCH_SIZE) {
-		const batch = DATE_SAMPLES.slice(i, i + BATCH_SIZE);
-		const results = await Promise.allSettled(
-			batch.map(([month, day]) => fetchOnThisDay(month, day))
-		);
-		allResults.push(...results);
-
-		if (i + BATCH_SIZE < DATE_SAMPLES.length) {
-			await new Promise(r => setTimeout(r, 100));
-		}
-	}
-
-	return allResults;
-}
 
 /**
  * Resolve the user's location input to a Wikipedia country name
@@ -368,6 +274,9 @@ function parseYearArticleEvents(html, year) {
 		// Skip nested lists (sub-items within a list item)
 		if (/<ul/i.test(liHtml)) continue;
 
+		// Count wiki links before stripping HTML (significance signal)
+		const linkCount = (liHtml.match(/<a[^>]+href="\/wiki\//gi) || []).length;
+
 		// Extract the first link's title and href for the "Read more" feature
 		const linkMatch = liHtml.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
 		const pageTitle = linkMatch ? decodeURIComponent(linkMatch[1]).replace(/_/g, ' ') : undefined;
@@ -393,7 +302,8 @@ function parseYearArticleEvents(html, year) {
 		const cleanedText = filterEventText(text);
 		if (cleanedText === null) continue;
 
-		events.push({ year, text: cleanedText, pageTitle, pageUrl });
+		const significance = scoreSignificance(cleanedText, linkCount);
+		events.push({ year, text: cleanedText, pageTitle, pageUrl, significance });
 	}
 
 	return events;
@@ -527,9 +437,7 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 				// Country-specific articles are already location-filtered.
 				// Generic year articles need location matching.
 				if (!fromCountryArticle) {
-					// Include pageTitle in matching data for better filter accuracy
-					const pages = event.pageTitle ? [{ title: event.pageTitle }] : [];
-					if (!eventMatchesLocation({ text: event.text, pages }, locationPatterns)) continue;
+					if (!eventMatchesLocation(event.text, event.pageTitle, locationPatterns)) continue;
 				}
 				event.characterAge = event.year - birthYear;
 				allEvents.push(event);
@@ -545,27 +453,3 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 	return allEvents;
 }
 
-/**
- * @typedef {Object} RawEvent
- * @property {number} year
- * @property {string} text
- * @property {Array<{title?: string, description?: string, extract?: string, content_urls?: {desktop?: {page?: string}}}>} [pages]
- */
-
-/**
- * @param {number} month
- * @param {number} day
- * @returns {Promise<RawEvent[]>}
- */
-async function fetchOnThisDay(month, day) {
-	const url = `${ON_THIS_DAY_URL}/events/${month}/${day}`;
-	const res = await fetch(url, {
-		headers: { 'User-Agent': USER_AGENT },
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-	});
-
-	if (!res.ok) return [];
-
-	const data = await res.json().catch(() => null);
-	return data?.events || [];
-}

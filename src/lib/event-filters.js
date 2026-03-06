@@ -91,9 +91,20 @@ export function isTooShort(text) {
 	return text.length < 20;
 }
 
+const SPORTS_RE = /\b(cricket|football|soccer|baseball|rugby|tennis|golf|horse\s*rac(?:e|ing)|boxing|rowing|polo|yacht|regatta|cup\s+final|fa\s+cup|championship\s+match|test\s+match|grand\s+prix|olympics?|olympic\s+games)\b/i;
+
+/**
+ * Reject sports events — results, matches, and competitions.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function isSportsEvent(text) {
+	return SPORTS_RE.test(text);
+}
+
 // ── Pipeline ─────────────────────────────────────────────────────
 
-const FILTERS = [isSectionLeak, isDateOnly, hasMalformedMarkup, isMostlyNumeric, isTooFewWords, isTooShort];
+const FILTERS = [isSectionLeak, isDateOnly, hasMalformedMarkup, isMostlyNumeric, isTooFewWords, isTooShort, isSportsEvent];
 
 /**
  * Clean and filter a single event's text.
@@ -112,4 +123,45 @@ export function filterEventText(text) {
 	}
 
 	return cleaned;
+}
+
+// ── Significance scoring ─────────────────────────────────────────
+
+/** @type {Array<[RegExp, number]>} */
+const KEYWORD_WEIGHTS = [
+	// High significance (1.0)
+	[/\b(war|revolution|independence|constitution|coronation|abdication|assassination|invasion|civil\s+war)\b/i, 1.0],
+	// Medium-high significance (0.7)
+	[/\b(battle|treaty|siege|rebellion|revolt|reform|act\s+of\s+parliament|famine|plague|earthquake|fire|massacre|crusade|edict|decree)\b/i, 0.7],
+	// Medium significance (0.4)
+	[/\b(founded|established|charter|expedition|alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.4],
+];
+
+/**
+ * Compute a 0–1 significance score for an event.
+ *
+ * Combines three signals:
+ * - **Link count** (50% weight): Number of Wikipedia links in the original HTML.
+ *   More links = more interconnected/notable. Capped at 8.
+ * - **Text length** (20% weight): Longer descriptions suggest more notable events.
+ *   Capped at 200 characters.
+ * - **Keyword weight** (30% weight): Presence of historically significant terms.
+ *   Takes the highest matching weight.
+ *
+ * @param {string} text       The cleaned event text.
+ * @param {number} linkCount  Number of wiki links found in the original HTML.
+ * @returns {number}          Score between 0 and 1.
+ */
+export function scoreSignificance(text, linkCount) {
+	const linkScore = Math.min(linkCount / 8, 1);
+	const lengthScore = Math.min(text.length / 200, 1);
+
+	let keywordScore = 0;
+	for (const [pattern, weight] of KEYWORD_WEIGHTS) {
+		if (pattern.test(text)) {
+			keywordScore = Math.max(keywordScore, weight);
+		}
+	}
+
+	return linkScore * 0.5 + lengthScore * 0.2 + keywordScore * 0.3;
 }
