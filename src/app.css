@@ -1,30 +1,51 @@
 @import "tailwindcss";
 @plugin "daisyui" {
-	themes: grand-chronicle --default
+	themes: epoch --default
 }
 
 @theme {
-	--font-serif: 'Georgia', 'Times New Roman', serif;
-	--font-sans: system-ui, -apple-system, sans-serif;
+	--font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+	--font-sans: 'Source Sans 3', system-ui, -apple-system, sans-serif;
+
+	--animate-fade-in: fade-in 0.4s ease-out;
+	--animate-slide-down: slide-down 0.3s ease-out;
+	--animate-collapse-open: collapse-open 0.3s ease-out;
 }
 
 @plugin "daisyui/theme" {
-	name: "grand-chronicle";
+	name: "epoch";
 	default: true;
-	color-scheme: dark;
-	--color-base-100: #0f0f0f;
-	--color-base-200: #1a1a2e;
-	--color-base-300: #16213e;
-	--color-base-content: #e8e8e8;
-	--color-primary: #e2b553;
-	--color-primary-content: #0f0f0f;
-	--color-secondary: #b8922e;
-	--color-secondary-content: #0f0f0f;
-	--color-neutral: #3a3a5c;
-	--color-neutral-content: #b3b3b3;
-	--color-error: #ff8888;
-	--color-error-content: #3a1111;
+	color-scheme: light;
+	--color-base-100: #FAF6F0;
+	--color-base-200: #F0EAE0;
+	--color-base-300: #E6DFD3;
+	--color-base-content: #2C2C2C;
+	--color-primary: #8B4513;
+	--color-primary-content: #FAF6F0;
+	--color-secondary: #6B7B3A;
+	--color-secondary-content: #FAF6F0;
+	--color-accent: #B8860B;
+	--color-accent-content: #FAF6F0;
+	--color-neutral: #C4B8A8;
+	--color-neutral-content: #7A7268;
+	--color-error: #B44040;
+	--color-error-content: #FAF6F0;
 	--radius-btn: 0.3rem;
 	--radius-box: 0.5rem;
 	--radius-field: 0.3rem;
+}
+
+@keyframes fade-in {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-down {
+	from { opacity: 0; max-height: 0; }
+	to { opacity: 1; max-height: 2000px; }
+}
+
+@keyframes collapse-open {
+	from { opacity: 0; transform: translateY(-4px); }
+	to { opacity: 1; transform: translateY(0); }
 }
