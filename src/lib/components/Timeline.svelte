@@ -65,10 +65,9 @@
 						.map(([year, yearEvents]) => ({ year, events: yearEvents }));
 				};
 
-				// Age range for this decade
-				const years = decadeEvents.map(e => e.year);
-				const minAge = Math.min(...years) - character.birthYear;
-				const maxAge = Math.max(...years) - character.birthYear;
+				// Age range for this decade (based on decade span, clamped to lifespan)
+				const minAge = Math.max(decade, character.birthYear) - character.birthYear;
+				const maxAge = Math.min(decade + 9, character.deathYear) - character.birthYear;
 
 				return {
 					decade,
