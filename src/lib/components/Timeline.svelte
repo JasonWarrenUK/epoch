@@ -124,6 +124,47 @@
 	function isSpecialYear(year) {
 		return year === character.birthYear || year === character.deathYear;
 	}
+
+	// Lifetime summary: most significant event from each life phase
+	const lifetimeSummary = $derived.by(() => {
+		const lifespan = character.deathYear - character.birthYear;
+
+		/** @type {Array<{label: string, event: import('$lib/types.js').HistoricalEvent}>} */
+		const phases = [];
+
+		// Define age boundaries based on lifespan length
+		const adulthoodStart = Math.min(18, lifespan);
+		const oldAgeStart = Math.min(60, lifespan);
+
+		/** @param {number} minAge @param {number} maxAge */
+		const bestInRange = (minAge, maxAge) => {
+			let best = null;
+			for (const e of events) {
+				const age = e.year - character.birthYear;
+				if (age >= minAge && age <= maxAge) {
+					if (!best || (e.significance ?? 0) > (best.significance ?? 0)) best = e;
+				}
+			}
+			return best;
+		};
+
+		if (adulthoodStart > 0) {
+			const e = bestInRange(0, adulthoodStart - 1);
+			if (e) phases.push({ label: 'Childhood', event: e });
+		}
+
+		if (oldAgeStart > adulthoodStart) {
+			const e = bestInRange(adulthoodStart, oldAgeStart - 1);
+			if (e) phases.push({ label: 'Adulthood', event: e });
+		}
+
+		if (lifespan >= oldAgeStart) {
+			const e = bestInRange(oldAgeStart, lifespan);
+			if (e) phases.push({ label: 'Old age', event: e });
+		}
+
+		return phases;
+	});
 </script>
 
 <section class="mt-10 animate-fade-in">
@@ -141,6 +182,31 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if lifetimeSummary.length > 0}
+		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
+			<h3 class="font-serif text-2xl text-primary text-center">A Life in Three Acts</h3>
+
+			<div class="grid gap-4 max-w-[36rem] mx-auto">
+				{#each lifetimeSummary as phase}
+					<div class="bg-base-200 rounded-lg p-5">
+						<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content mb-1">{phase.label}</p>
+						<p class="text-base-content">
+							<span class="font-serif font-bold text-primary">{phase.event.year}</span>
+							<span class="text-xs text-neutral-content">age {phase.event.year - character.birthYear}</span>
+							&mdash; {phase.event.text}
+						</p>
+						{#if phase.event.pageUrl}
+							<a href={phase.event.pageUrl} target="_blank" rel="noopener noreferrer"
+								class="text-xs text-secondary hover:underline mt-2 inline-block">
+								Read more
+							</a>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
 
 	{#if oralHistory.length > 0}
 		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
