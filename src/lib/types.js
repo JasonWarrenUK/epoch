@@ -13,6 +13,7 @@
  * @property {string} [pageTitle]
  * @property {string} [pageUrl]
  * @property {number} [characterAge]
+ * @property {number} [significance]
  */
 
 export {};
