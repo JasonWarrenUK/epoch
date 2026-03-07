@@ -7,6 +7,25 @@ const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/
 const FETCH_TIMEOUT_MS = 10_000;
 
 /**
+ * Fetch with automatic retry on rate-limit (429) or server errors (5xx).
+ * Uses exponential backoff: 1s, 2s, 4s.
+ *
+ * @param {string} url
+ * @param {RequestInit} opts
+ * @param {number} [retries=3]
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, opts, retries = 3) {
+	for (let attempt = 0; ; attempt++) {
+		const res = await fetch(url, opts);
+		if (res.ok || attempt >= retries || (res.status !== 429 && res.status < 500)) {
+			return res;
+		}
+		await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+	}
+}
+
+/**
  * Maps location input terms to the Wikipedia country name used in
  * year-article titles (e.g. "1066 in England").
  * Keys are lowercase; values are title-case as used in Wikipedia.
@@ -232,6 +251,27 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 
 
 /**
+ * Era-based alternative country names for Wikipedia year articles.
+ * After political unions, Wikipedia uses different article titles.
+ * Keys are base country names from LOCATION_TO_WIKI_COUNTRY.
+ *
+ * @type {Record<string, Array<{from: number, name: string}>>}
+ */
+const COUNTRY_ERA_NAMES = {
+	'England': [
+		{ from: 1707, name: 'Great_Britain' },
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+	'Scotland': [
+		{ from: 1707, name: 'Great_Britain' },
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+	'Ireland': [
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+};
+
+/**
  * Resolve the user's location input to a Wikipedia country name
  * for year-article lookups (e.g. "London, England" → "England").
  *
@@ -250,6 +290,28 @@ function resolveWikiCountry(location) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Get the country name(s) to try for a given year, accounting for
+ * political unions (e.g. England → Great Britain after 1707).
+ * Returns the era-specific name first, then the base name as fallback.
+ *
+ * @param {string} baseCountry  The base country from resolveWikiCountry()
+ * @param {number} year
+ * @returns {string[]}
+ */
+function getCountryNamesForYear(baseCountry, year) {
+	const eras = COUNTRY_ERA_NAMES[baseCountry];
+	if (!eras) return [baseCountry];
+
+	// Find the most recent era that applies
+	for (let i = eras.length - 1; i >= 0; i--) {
+		if (year >= eras[i].from) {
+			return [eras[i].name, baseCountry];
+		}
+	}
+	return [baseCountry];
 }
 
 /**
@@ -323,7 +385,7 @@ async function findEventsSection(pageTitle) {
 		format: 'json',
 		redirects: '1',
 	});
-	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+	const res = await fetchWithRetry(`${MEDIAWIKI_API_URL}?${params}`, {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
@@ -347,14 +409,17 @@ async function findEventsSection(pageTitle) {
  * @returns {Promise<{events: import('./types.js').HistoricalEvent[], fromCountryArticle: boolean}>}
  */
 async function fetchYearArticleEvents(year, wikiCountry) {
-	// Try country-specific article first (e.g. "1066 in England")
+	// Try country-specific articles (e.g. "1066 in England", "1710 in Great Britain")
 	if (wikiCountry) {
-		const countryTitle = `${year}_in_${wikiCountry}`;
-		const sectionIdx = await findEventsSection(countryTitle);
-		if (sectionIdx !== null) {
-			const events = await fetchParsedSection(countryTitle, sectionIdx, year);
-			if (events.length > 0) {
-				return { events, fromCountryArticle: true };
+		const countryNames = getCountryNamesForYear(wikiCountry, year);
+		for (const country of countryNames) {
+			const countryTitle = `${year}_in_${country}`;
+			const sectionIdx = await findEventsSection(countryTitle);
+			if (sectionIdx !== null) {
+				const events = await fetchParsedSection(countryTitle, sectionIdx, year);
+				if (events.length > 0) {
+					return { events, fromCountryArticle: true };
+				}
 			}
 		}
 	}
@@ -387,7 +452,7 @@ async function fetchParsedSection(pageTitle, sectionIndex, year) {
 		format: 'json',
 		redirects: '1',
 	});
-	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+	const res = await fetchWithRetry(`${MEDIAWIKI_API_URL}?${params}`, {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
@@ -421,7 +486,7 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 	for (let y = birthYear; y <= deathYear; y++) years.push(y);
 
 	// Process in batches to respect API rate limits
-	const BATCH_SIZE = 10;
+	const BATCH_SIZE = 5;
 	for (let i = 0; i < years.length; i += BATCH_SIZE) {
 		const batch = years.slice(i, i + BATCH_SIZE);
 		const results = await Promise.allSettled(
@@ -444,9 +509,9 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 			}
 		}
 
-		// Small delay between batches to be polite to the API
+		// Delay between batches to avoid rate-limiting
 		if (i + BATCH_SIZE < years.length) {
-			await new Promise(r => setTimeout(r, 100));
+			await new Promise(r => setTimeout(r, 500));
 		}
 	}
 
