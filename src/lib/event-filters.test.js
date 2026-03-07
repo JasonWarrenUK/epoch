@@ -307,11 +307,11 @@ describe('scoreSignificance', () => {
 		expect(parent).toBeGreaterThan(child);
 	});
 
-	it('child events receive 0.5x penalty', () => {
+	it('child events receive 0.8x penalty', () => {
 		const text = 'A significant battle takes place in the northern territory';
 		const normal = scoreSignificance(text, 3);
 		const asChild = scoreSignificance(text, 3, { isChild: true });
-		expect(asChild).toBeCloseTo(normal * 0.5, 5);
+		expect(asChild).toBeCloseTo(normal * 0.8, 5);
 	});
 
 	it('parent structure score scales with child count', () => {

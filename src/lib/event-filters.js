@@ -241,8 +241,11 @@ export function scoreSignificance(text, linkCount, opts = {}) {
 		+ structureScore * 0.15
 		+ keywordScore * 0.15;
 
-	// Penalty for child events: they are sub-events of something bigger
-	if (isChild) score *= 0.5;
+	// Child events get a mild penalty — they are sub-events, but in Wikipedia
+	// year articles the children often contain the actual notable events
+	// (e.g. "May 29 – Charles II lands at Dover" under parent "The Restoration:").
+	// A harsh penalty (0.5x) caused these to be outscored by verbose flat events.
+	if (isChild) score *= 0.8;
 
 	return score;
 }
