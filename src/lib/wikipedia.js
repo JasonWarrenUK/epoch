@@ -721,10 +721,16 @@ function extractAllWikiLinks(html) {
  * Extract the best wiki link from an HTML fragment — prefer links that
  * represent the *event itself* over links to people or places.
  *
- * Strategy:
- * 1. If any link title matches event-type words (Battle, War, Treaty, etc.), pick the first one
- * 2. Otherwise fall back to the first link that doesn't look like a person
- * 3. Last resort: the very first link
+ * Strategy (prioritised):
+ * 1. Among the first 3 links (likely the subject), prefer event-type titles
+ * 2. Among ALL links, prefer event-type titles (but with lower confidence)
+ * 3. Among the first 3 links, prefer non-person titles
+ * 4. Fall back to the very first link
+ *
+ * The "first 3 links" heuristic addresses the problem where an event merely
+ * *mentions* a famous event in passing (e.g. "...attempted to rekindle the
+ * Civil War...") — the Civil War link appears late in the text and shouldn't
+ * define this event's identity.
  *
  * @param {string} html
  * @returns {{ pageTitle?: string, pageUrl?: string }}
@@ -733,29 +739,37 @@ function extractBestWikiLink(html) {
 	const links = extractAllWikiLinks(html);
 	if (links.length === 0) return {};
 
-	// Pass 1: prefer links whose title contains event-type words
-	const eventLink = links.find(l => EVENT_LINK_WORDS.test(l.title));
-	if (eventLink) {
-		return {
-			pageTitle: eventLink.title,
-			pageUrl: `https://en.wikipedia.org/wiki/${eventLink.slug}`,
-		};
+	const makeResult = (/** @type {{slug: string, title: string}} */ l) => ({
+		pageTitle: l.title,
+		pageUrl: `https://en.wikipedia.org/wiki/${l.slug}`,
+	});
+
+	// "Early" links are the first 3 — most likely to describe the event's subject
+	const earlyLinks = links.slice(0, 3);
+
+	// Pass 1: event-type word in an early link (strongest signal)
+	const earlyEventLink = earlyLinks.find(l => EVENT_LINK_WORDS.test(l.title));
+	if (earlyEventLink) return makeResult(earlyEventLink);
+
+	// Pass 2: event-type word in any link (weaker — could be incidental mention)
+	// Only use if the event text is short (< 100 chars stripped), meaning the
+	// event IS about that topic rather than just mentioning it
+	const strippedLen = html.replace(/<[^>]+>/g, '').length;
+	if (strippedLen < 100) {
+		const anyEventLink = links.find(l => EVENT_LINK_WORDS.test(l.title));
+		if (anyEventLink) return makeResult(anyEventLink);
 	}
 
-	// Pass 2: prefer the first non-person link
-	const nonPersonLink = links.find(l => !PERSON_LINK_WORDS.test(l.title));
-	if (nonPersonLink) {
-		return {
-			pageTitle: nonPersonLink.title,
-			pageUrl: `https://en.wikipedia.org/wiki/${nonPersonLink.slug}`,
-		};
-	}
+	// Pass 3: first non-person early link
+	const earlyNonPerson = earlyLinks.find(l => !PERSON_LINK_WORDS.test(l.title));
+	if (earlyNonPerson) return makeResult(earlyNonPerson);
 
-	// Pass 3: fall back to first link
-	return {
-		pageTitle: links[0].title,
-		pageUrl: `https://en.wikipedia.org/wiki/${links[0].slug}`,
-	};
+	// Pass 4: first non-person link anywhere
+	const anyNonPerson = links.find(l => !PERSON_LINK_WORDS.test(l.title));
+	if (anyNonPerson) return makeResult(anyNonPerson);
+
+	// Pass 5: fall back to first link
+	return makeResult(links[0]);
 }
 
 /**
@@ -924,6 +938,123 @@ async function findEventsSection(pageTitle) {
 }
 
 /**
+ * Boost events that also appear in the generic year article (e.g. "1660").
+ * Events listed in the global article are editorially selected as world-
+ * historically notable — a very strong significance signal.
+ *
+ * Uses fuzzy matching: if a country-specific event's pageTitle matches
+ * any link in the generic article's events, it gets a 1.5x significance boost.
+ *
+ * @param {import('./types.js').HistoricalEvent[]} countryEvents
+ * @param {number} year
+ */
+async function boostGloballyNotableEvents(countryEvents, year) {
+	const yearTitle = String(year);
+	const sectionIdx = await findEventsSection(yearTitle);
+	if (sectionIdx === null) return;
+
+	const genericEvents = await fetchParsedSection(yearTitle, sectionIdx, year);
+	if (genericEvents.length === 0) return;
+
+	// Build a set of all page titles and significant text fragments from the generic article
+	const globalTitles = new Set();
+	const globalTextFragments = [];
+	for (const ge of genericEvents) {
+		if (ge.pageTitle) globalTitles.add(ge.pageTitle.toLowerCase());
+		// Also extract key phrases (first ~60 chars of text, lowercased)
+		const fragment = ge.text.toLowerCase().slice(0, 60);
+		globalTextFragments.push(fragment);
+	}
+
+	// Boost country events that match
+	for (const event of countryEvents) {
+		let isGlobal = false;
+
+		// Match by shared page title (most reliable)
+		if (event.pageTitle && globalTitles.has(event.pageTitle.toLowerCase())) {
+			isGlobal = true;
+		}
+
+		// Match by text similarity (fallback for different links to same event)
+		if (!isGlobal) {
+			const eventFragment = event.text.toLowerCase().slice(0, 60);
+			for (const gf of globalTextFragments) {
+				// Check if they share significant overlap (>50% of shorter fragment)
+				const shorter = Math.min(eventFragment.length, gf.length);
+				if (shorter > 20) {
+					// Simple check: do they share a substantial substring?
+					const words = eventFragment.split(/\s+/).filter(w => w.length > 3);
+					const matchingWords = words.filter(w => gf.includes(w));
+					if (matchingWords.length >= 3) {
+						isGlobal = true;
+						break;
+					}
+				}
+			}
+		}
+
+		if (isGlobal && event.significance !== undefined) {
+			event.significance *= 1.5;
+		}
+	}
+}
+
+/**
+ * Historical country name transitions for Wikipedia article titles.
+ * Wikipedia uses different article names for different eras
+ * (e.g. "1660 in England" vs "1720 in Great Britain" vs "1820 in the United Kingdom").
+ *
+ * Each entry maps a base country name to an array of {name, from, to} periods.
+ * @type {Record<string, Array<{name: string, from: number, to: number}>>}
+ */
+const COUNTRY_NAME_TRANSITIONS = {
+	'England': [
+		{ name: 'England', from: 0, to: 1706 },
+		{ name: 'Great_Britain', from: 1707, to: 1800 },
+		{ name: 'the_United_Kingdom', from: 1801, to: 9999 },
+	],
+	'Scotland': [
+		{ name: 'Scotland', from: 0, to: 1706 },
+		{ name: 'Great_Britain', from: 1707, to: 1800 },
+		{ name: 'the_United_Kingdom', from: 1801, to: 9999 },
+	],
+	'Wales': [
+		{ name: 'Wales', from: 0, to: 1706 },
+		{ name: 'Great_Britain', from: 1707, to: 1800 },
+		{ name: 'the_United_Kingdom', from: 1801, to: 9999 },
+	],
+	'Ireland': [
+		{ name: 'Ireland', from: 0, to: 1800 },
+		{ name: 'the_United_Kingdom', from: 1801, to: 1921 },
+		{ name: 'Ireland', from: 1922, to: 9999 },
+	],
+};
+
+/**
+ * Get the Wikipedia article country name variants for a given year.
+ * Returns an array of names to try, with the most specific first.
+ * Falls back to the base country name if no transitions are defined.
+ *
+ * @param {string} wikiCountry  The base country name (e.g. "England")
+ * @param {number} year
+ * @returns {string[]}  Country name variants to try (e.g. ["Great_Britain", "England"])
+ */
+function getCountryVariants(wikiCountry, year) {
+	const transitions = COUNTRY_NAME_TRANSITIONS[wikiCountry];
+	if (!transitions) return [wikiCountry];
+
+	// Find the matching era
+	const match = transitions.find(t => year >= t.from && year <= t.to);
+	if (!match) return [wikiCountry];
+
+	// Return the era-appropriate name first, then the base name as fallback
+	// (in case Wikipedia has inconsistent coverage)
+	const variants = [match.name];
+	if (match.name !== wikiCountry) variants.push(wikiCountry);
+	return variants;
+}
+
+/**
  * Fetch and parse events from a Wikipedia year article.
  *
  * @param {number} year
@@ -931,18 +1062,34 @@ async function findEventsSection(pageTitle) {
  * @returns {Promise<{events: import('./types.js').HistoricalEvent[], fromCountryArticle: boolean}>}
  */
 async function fetchYearArticleEvents(year, wikiCountry) {
-	// Try country-specific article first (e.g. "1066 in England").
-	// The API uses redirects=1, so Wikipedia handles renamed countries
-	// automatically (e.g. "1710 in England" → "1710 in Great Britain").
+	// Try country-specific article(s). Some countries changed names over time
+	// (e.g. England → Great Britain after 1707 → United Kingdom after 1801).
+	// Wikipedia uses different article titles for each era, and redirects
+	// are inconsistent, so we try all applicable variants for the year.
 	if (wikiCountry) {
-		const countryTitle = `${year}_in_${wikiCountry}`;
-		const sectionIdx = await findEventsSection(countryTitle);
-		if (sectionIdx !== null) {
-			const events = await fetchParsedSection(countryTitle, sectionIdx, year);
-			if (events.length > 0) {
-				return { events, fromCountryArticle: true };
+		const countryVariants = getCountryVariants(wikiCountry, year);
+
+		/** @type {import('./types.js').HistoricalEvent[]} */
+		let countryEvents = [];
+		for (const variant of countryVariants) {
+			const countryTitle = `${year}_in_${variant}`;
+			const sectionIdx = await findEventsSection(countryTitle);
+			if (sectionIdx !== null) {
+				const events = await fetchParsedSection(countryTitle, sectionIdx, year);
+				if (events.length > 0) {
+					countryEvents = events;
+					break;
+				}
 			}
 		}
+
+		if (countryEvents.length > 0) {
+			// Cross-reference with the generic year article to boost
+			// events that are globally notable (appear in both articles).
+			await boostGloballyNotableEvents(countryEvents, year);
+			return { events: countryEvents, fromCountryArticle: true };
+		}
+
 		// When we have a country, don't fall back to generic year articles.
 		// Generic articles contain worldwide events that are mostly irrelevant
 		// and impossible to filter reliably by location keywords.
