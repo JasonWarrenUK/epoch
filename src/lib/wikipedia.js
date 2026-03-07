@@ -367,8 +367,131 @@ export async function fetchOralHistory(birthYear, location) {
 }
 
 /**
+ * Wikidata item IDs for entity type classification.
+ * Used to distinguish events from people/places in scoring.
+ */
+const WIKIDATA_EVENT_TYPES = new Set([
+	'Q1190554',  // occurrence / event
+	'Q1656682',  // event
+	'Q178561',   // battle
+	'Q131569',   // treaty
+	'Q35127',    // legislation
+	'Q8065',     // natural disaster
+	'Q7864918',  // armed conflict
+	'Q124757',   // riot
+	'Q175331',   // rebellion
+	'Q12184',    // pandemic
+	'Q188055',   // siege
+	'Q209715',   // massacre
+	'Q5107',     // continent (not event, but not person either)
+	'Q10931',    // revolution
+	'Q12144794', // political crisis
+	'Q208450',   // coup d'état
+	'Q18643',    // military operation
+	'Q184199',   // famine
+	'Q15283424', // diplomatic conference
+	'Q569500',   // peace treaty
+	'Q83267',    // civil war
+]);
+
+const WIKIDATA_PERSON_TYPES = new Set([
+	'Q5',        // human
+	'Q15632617', // fictional human
+]);
+
+const WIKIDATA_PLACE_TYPES = new Set([
+	'Q515',      // city
+	'Q6256',     // country
+	'Q486972',   // human settlement
+	'Q3624078',  // sovereign state
+	'Q82794',    // geographic region
+	'Q35657',    // state/province
+]);
+
+const WIKIDATA_API_URL = 'https://www.wikidata.org/w/api.php';
+
+/**
+ * @typedef {Object} WikidataInfo
+ * @property {number} sitelinks  Number of language editions with an article.
+ * @property {'event'|'person'|'place'|'other'} entityType  Classified type.
+ */
+
+/**
+ * Batch-fetch Wikidata info (sitelinks + entity type) for a list of Wikipedia page titles.
+ * Uses a single API call (up to 50 titles). Returns a Map of title → WikidataInfo.
+ *
+ * @param {string[]} titles
+ * @returns {Promise<Map<string, WikidataInfo>>}
+ */
+async function fetchWikidataInfo(titles) {
+	/** @type {Map<string, WikidataInfo>} */
+	const info = new Map();
+	if (titles.length === 0) return info;
+
+	const params = new URLSearchParams({
+		action: 'wbgetentities',
+		sites: 'enwiki',
+		titles: titles.slice(0, 50).join('|'),
+		props: 'sitelinks|claims',
+		format: 'json',
+	});
+
+	try {
+		const res = await fetchWithRetry(`${WIKIDATA_API_URL}?${params}`, {
+			headers: { 'User-Agent': USER_AGENT },
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+		if (!res.ok) return info;
+
+		const data = await res.json().catch(() => null);
+		const entities = data?.entities;
+		if (!entities) return info;
+
+		for (const entity of Object.values(entities)) {
+			const e = /** @type {any} */ (entity);
+			if (e.missing !== undefined) continue;
+
+			// Get English Wikipedia title for mapping back
+			const enTitle = e.sitelinks?.enwiki?.title;
+			if (!enTitle) continue;
+
+			// Count sitelinks
+			const sitelinkCount = e.sitelinks ? Object.keys(e.sitelinks).length : 0;
+
+			// Classify entity type from P31 (instance of)
+			const p31Claims = e.claims?.P31 || [];
+			const p31Ids = p31Claims.map(
+				(/** @type {any} */ c) => c.mainsnak?.datavalue?.value?.id
+			).filter(Boolean);
+
+			let entityType = /** @type {'event'|'person'|'place'|'other'} */ ('other');
+			for (const id of p31Ids) {
+				if (WIKIDATA_EVENT_TYPES.has(id)) { entityType = 'event'; break; }
+			}
+			if (entityType === 'other') {
+				for (const id of p31Ids) {
+					if (WIKIDATA_PERSON_TYPES.has(id)) { entityType = 'person'; break; }
+				}
+			}
+			if (entityType === 'other') {
+				for (const id of p31Ids) {
+					if (WIKIDATA_PLACE_TYPES.has(id)) { entityType = 'place'; break; }
+				}
+			}
+
+			info.set(enTitle, { sitelinks: sitelinkCount, entityType });
+		}
+	} catch {
+		// Non-critical — fall back to significance-only ranking
+	}
+
+	return info;
+}
+
+/**
  * Batch-fetch article byte sizes from Wikipedia for a list of page titles.
  * Uses a single API call (up to 50 titles). Returns a Map of title → size.
+ * Kept as fallback if Wikidata is unavailable.
  *
  * @param {string[]} titles
  * @returns {Promise<Map<string, number>>}
@@ -409,15 +532,42 @@ async function fetchArticleSizes(titles) {
 	return sizes;
 }
 
-/** Number of top candidates to consider for article-size ranking. */
+/** Number of top candidates to consider for Wikidata-based ranking. */
 const TOP_CANDIDATES = 10;
 
-/** Article size (bytes) that saturates the size score. */
-const ARTICLE_SIZE_CAP = 50_000;
+/** Sitelink count that saturates the sitelink score. */
+const SITELINK_CAP = 80;
 
 /**
- * Pick the most significant event from a list. Article size is the
- * dominant signal (50% of final score) — best proxy for recognition.
+ * Entity-type multiplier — adjusts sitelink score based on whether the
+ * linked article is about an event, person, or place.
+ *
+ * Events get full weight (their sitelinks reflect the event's notability).
+ * People get 0.3x (a famous person doesn't make a trivial event significant).
+ * Places get 0.2x (geographic links are context, not the event).
+ * Other/unknown get 0.5x.
+ *
+ * @param {'event'|'person'|'place'|'other'} entityType
+ * @returns {number}
+ */
+function entityTypeMultiplier(entityType) {
+	switch (entityType) {
+		case 'event': return 1.0;
+		case 'person': return 0.3;
+		case 'place': return 0.2;
+		default: return 0.5;
+	}
+}
+
+/**
+ * Pick the most significant event from a list. Uses Wikidata sitelinks
+ * (language editions) as the primary notability signal, weighted by
+ * entity type to distinguish event articles from person/place articles.
+ *
+ * Final score: textSignificance * 0.4 + wikidataScore * 0.6
+ * where wikidataScore = (sitelinks / cap) * entityTypeMultiplier
+ *
+ * Falls back to article byte size if Wikidata returns no results.
  *
  * @param {import('./types.js').HistoricalEvent[]} events
  * @returns {Promise<import('./types.js').HistoricalEvent | null>}
@@ -428,24 +578,42 @@ async function pickBestEvent(events) {
 	events.sort((a, b) => (b.significance ?? 0) - (a.significance ?? 0));
 	const candidates = events.slice(0, TOP_CANDIDATES);
 
-	// Batch-fetch article sizes for the top candidates
+	// Batch-fetch Wikidata info for the top candidates
 	const titlesToFetch = candidates
 		.map(e => e.pageTitle)
 		.filter(/** @type {(t: string | undefined) => t is string} */ (t) => !!t);
 
-	const sizes = await fetchArticleSizes(titlesToFetch);
+	const wikidataInfo = await fetchWikidataInfo(titlesToFetch);
+
+	// If Wikidata returned nothing, fall back to article sizes
+	const useWikidata = wikidataInfo.size > 0;
+	const articleSizes = useWikidata ? new Map() : await fetchArticleSizes(titlesToFetch);
 
 	let best = candidates[0];
 	let bestScore = -1;
 
 	for (const event of candidates) {
 		const sig = event.significance ?? 0;
-		const articleSize = event.pageTitle ? (sizes.get(event.pageTitle) ?? 0) : 0;
-		const sizeScore = Math.min(articleSize / ARTICLE_SIZE_CAP, 1);
-		// Article size is the dominant signal — best proxy for "have I heard of this?"
-		let finalScore = sig * 0.5 + sizeScore * 0.5;
+		let externalScore = 0;
+
+		if (useWikidata && event.pageTitle) {
+			const wd = wikidataInfo.get(event.pageTitle);
+			if (wd) {
+				const rawSitelinkScore = Math.min(wd.sitelinks / SITELINK_CAP, 1);
+				externalScore = rawSitelinkScore * entityTypeMultiplier(wd.entityType);
+			}
+		} else if (!useWikidata && event.pageTitle) {
+			// Fallback: article byte size (original approach)
+			const articleSize = articleSizes.get(event.pageTitle) ?? 0;
+			externalScore = Math.min(articleSize / 50_000, 1);
+		}
+
+		// Wikidata/external signal is dominant (60%), text heuristics secondary (40%)
+		let finalScore = sig * 0.4 + externalScore * 0.6;
+
 		// Events with no linked article are likely obscure
 		if (!event.pageTitle) finalScore *= 0.5;
+
 		if (finalScore > bestScore) {
 			bestScore = finalScore;
 			best = event;
@@ -521,16 +689,72 @@ function stripHtmlAndDecode(html) {
 }
 
 /**
- * Extract the first wiki link's page title and URL from an HTML fragment.
+ * Words that suggest a wiki link points to an event rather than a person/place.
+ * Used by smart link extraction to prefer event-type articles.
+ */
+const EVENT_LINK_WORDS = /\b(battle|war|siege|treaty|act|fire|revolution|revolt|rebellion|massacre|plague|famine|earthquake|crusade|invasion|coup|riot|mutiny|expedition|crisis|incident|affair|scandal|disaster|catastrophe|edict|decree|charter|concordat|armistice|capitulation|restoration|reformation|schism|inquisition|coronation|abdication|assassination|execution|purge|exodus|migration)\b/i;
+
+/**
+ * Words that suggest a wiki link points to a person (deprioritise).
+ */
+const PERSON_LINK_WORDS = /^(king|queen|prince|princess|duke|earl|lord|lady|sir|saint|pope|emperor|empress|count|baron|bishop|archbishop|cardinal|captain|admiral|general|colonel|major)\b/i;
+
+/**
+ * Extract all wiki links from an HTML fragment.
+ * @param {string} html
+ * @returns {Array<{slug: string, title: string}>}
+ */
+function extractAllWikiLinks(html) {
+	const links = [];
+	const pattern = /<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/g;
+	let m;
+	while ((m = pattern.exec(html)) !== null) {
+		links.push({
+			slug: m[1],
+			title: decodeURIComponent(m[1]).replace(/_/g, ' '),
+		});
+	}
+	return links;
+}
+
+/**
+ * Extract the best wiki link from an HTML fragment — prefer links that
+ * represent the *event itself* over links to people or places.
+ *
+ * Strategy:
+ * 1. If any link title matches event-type words (Battle, War, Treaty, etc.), pick the first one
+ * 2. Otherwise fall back to the first link that doesn't look like a person
+ * 3. Last resort: the very first link
+ *
  * @param {string} html
  * @returns {{ pageTitle?: string, pageUrl?: string }}
  */
-function extractFirstWikiLink(html) {
-	const linkMatch = html.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
-	if (!linkMatch) return {};
+function extractBestWikiLink(html) {
+	const links = extractAllWikiLinks(html);
+	if (links.length === 0) return {};
+
+	// Pass 1: prefer links whose title contains event-type words
+	const eventLink = links.find(l => EVENT_LINK_WORDS.test(l.title));
+	if (eventLink) {
+		return {
+			pageTitle: eventLink.title,
+			pageUrl: `https://en.wikipedia.org/wiki/${eventLink.slug}`,
+		};
+	}
+
+	// Pass 2: prefer the first non-person link
+	const nonPersonLink = links.find(l => !PERSON_LINK_WORDS.test(l.title));
+	if (nonPersonLink) {
+		return {
+			pageTitle: nonPersonLink.title,
+			pageUrl: `https://en.wikipedia.org/wiki/${nonPersonLink.slug}`,
+		};
+	}
+
+	// Pass 3: fall back to first link
 	return {
-		pageTitle: decodeURIComponent(linkMatch[1]).replace(/_/g, ' '),
-		pageUrl: `https://en.wikipedia.org/wiki/${linkMatch[1]}`,
+		pageTitle: links[0].title,
+		pageUrl: `https://en.wikipedia.org/wiki/${links[0].slug}`,
 	};
 }
 
@@ -605,7 +829,7 @@ function parseYearArticleEvents(html, year) {
 			// Process parent text through filter
 			const cleanedParent = filterEventText(parentText);
 			if (cleanedParent) {
-				const { pageTitle, pageUrl } = extractFirstWikiLink(parentHtml);
+				const { pageTitle, pageUrl } = extractBestWikiLink(parentHtml);
 				raw.push({
 					text: cleanedParent,
 					pageTitle,
@@ -630,7 +854,7 @@ function parseYearArticleEvents(html, year) {
 					if (!cleanedChild) continue;
 
 					const childLinkCount = (childLi[1].match(/<a[^>]+href="\/wiki\//gi) || []).length;
-					const { pageTitle, pageUrl } = extractFirstWikiLink(childLi[1]);
+					const { pageTitle, pageUrl } = extractBestWikiLink(childLi[1]);
 					raw.push({
 						text: cleanedChild,
 						pageTitle,
@@ -651,7 +875,7 @@ function parseYearArticleEvents(html, year) {
 		const cleanedText = filterEventText(text);
 		if (cleanedText === null) continue;
 
-		const { pageTitle, pageUrl } = extractFirstWikiLink(liHtml);
+		const { pageTitle, pageUrl } = extractBestWikiLink(liHtml);
 		raw.push({ text: cleanedText, pageTitle, pageUrl, linkCount, isParent: false, isChild: false, childCount: 0 });
 	}
 
