@@ -249,6 +249,45 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	return deduped;
 }
 
+/**
+ * Compute the lifetime summary — the most significant event from each
+ * life phase (childhood, adulthood, old age), using article-size
+ * tiebreaking for the top candidates in each phase.
+ *
+ * @param {import('./types.js').HistoricalEvent[]} events
+ * @param {number} birthYear
+ * @param {number} deathYear
+ * @returns {Promise<import('./types.js').LifetimeSummaryPhase[]>}
+ */
+export async function fetchLifetimeSummary(events, birthYear, deathYear) {
+	const lifespan = deathYear - birthYear;
+	const adulthoodStart = Math.min(18, lifespan);
+	const oldAgeStart = Math.min(60, lifespan);
+
+	/** @param {number} minAge @param {number} maxAge */
+	const eventsInRange = (minAge, maxAge) =>
+		events.filter(e => {
+			const age = e.year - birthYear;
+			return age >= minAge && age <= maxAge;
+		});
+
+	/** @type {Array<{label: string, minAge: number, maxAge: number}>} */
+	const phases = [];
+	if (adulthoodStart > 0) phases.push({ label: 'Childhood', minAge: 0, maxAge: adulthoodStart - 1 });
+	if (oldAgeStart > adulthoodStart) phases.push({ label: 'Adulthood', minAge: adulthoodStart, maxAge: oldAgeStart - 1 });
+	if (lifespan >= oldAgeStart) phases.push({ label: 'Old age', minAge: oldAgeStart, maxAge: lifespan });
+
+	/** @type {import('./types.js').LifetimeSummaryPhase[]} */
+	const results = [];
+
+	for (const phase of phases) {
+		const best = await pickBestEvent(eventsInRange(phase.minAge, phase.maxAge));
+		if (best) results.push({ label: phase.label, event: best });
+	}
+
+	return results;
+}
+
 /** Age at which the character meets an elder. */
 const MEETING_AGE = 15;
 /** Age of the elder when they meet the character. */
@@ -304,6 +343,92 @@ export async function fetchOralHistory(birthYear, location) {
 }
 
 /**
+ * Batch-fetch article byte sizes from Wikipedia for a list of page titles.
+ * Uses a single API call (up to 50 titles). Returns a Map of title → size.
+ *
+ * @param {string[]} titles
+ * @returns {Promise<Map<string, number>>}
+ */
+async function fetchArticleSizes(titles) {
+	/** @type {Map<string, number>} */
+	const sizes = new Map();
+	if (titles.length === 0) return sizes;
+
+	const params = new URLSearchParams({
+		action: 'query',
+		titles: titles.slice(0, 50).join('|'),
+		prop: 'info',
+		format: 'json',
+		redirects: '1',
+	});
+
+	try {
+		const res = await fetchWithRetry(`${MEDIAWIKI_API_URL}?${params}`, {
+			headers: { 'User-Agent': USER_AGENT },
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+		if (!res.ok) return sizes;
+
+		const data = await res.json().catch(() => null);
+		const pages = data?.query?.pages;
+		if (!pages) return sizes;
+
+		for (const page of Object.values(pages)) {
+			if (/** @type {any} */ (page).length) {
+				sizes.set(/** @type {any} */ (page).title, /** @type {any} */ (page).length);
+			}
+		}
+	} catch {
+		// Non-critical — fall back to significance-only ranking
+	}
+
+	return sizes;
+}
+
+/** Number of top candidates to consider for article-size tiebreaking. */
+const TOP_CANDIDATES = 5;
+
+/** Article size (bytes) that saturates the size score. */
+const ARTICLE_SIZE_CAP = 50_000;
+
+/**
+ * Pick the most significant event from a list, using article size
+ * as a tiebreaker for the top candidates.
+ *
+ * @param {import('./types.js').HistoricalEvent[]} events
+ * @returns {Promise<import('./types.js').HistoricalEvent | null>}
+ */
+async function pickBestEvent(events) {
+	if (events.length === 0) return null;
+
+	events.sort((a, b) => (b.significance ?? 0) - (a.significance ?? 0));
+	const candidates = events.slice(0, TOP_CANDIDATES);
+
+	// Batch-fetch article sizes for the top candidates
+	const titlesToFetch = candidates
+		.map(e => e.pageTitle)
+		.filter(/** @type {(t: string | undefined) => t is string} */ (t) => !!t);
+
+	const sizes = await fetchArticleSizes(titlesToFetch);
+
+	let best = candidates[0];
+	let bestScore = -1;
+
+	for (const event of candidates) {
+		const sig = event.significance ?? 0;
+		const articleSize = event.pageTitle ? (sizes.get(event.pageTitle) ?? 0) : 0;
+		const sizeScore = Math.min(articleSize / ARTICLE_SIZE_CAP, 1);
+		const finalScore = sig + sizeScore * 0.3;
+		if (finalScore > bestScore) {
+			bestScore = finalScore;
+			best = event;
+		}
+	}
+
+	return best;
+}
+
+/**
  * Fetch events for a year range and return the single most significant one.
  *
  * @param {number} fromYear
@@ -315,10 +440,7 @@ async function fetchMostSignificantEvent(fromYear, toYear, location) {
 	if (fromYear < 1) return null;
 
 	const events = await fetchEventsFromYearArticles(fromYear, toYear, location);
-	if (events.length === 0) return null;
-
-	events.sort((a, b) => (b.significance ?? 0) - (a.significance ?? 0));
-	return events[0];
+	return pickBestEvent(events);
 }
 
 /**
@@ -351,30 +473,28 @@ function resolveWikiCountry(location) {
  * @returns {import('./types.js').HistoricalEvent[]}
  */
 function parseYearArticleEvents(html, year) {
-	/** @type {import('./types.js').HistoricalEvent[]} */
-	const events = [];
+	// Two-pass approach: first extract events with raw link counts,
+	// then score using a dynamic link cap based on the article's max.
 
-	// Match each <li> element (non-greedy to handle nested content)
+	/** @type {Array<{text: string, pageTitle?: string, pageUrl?: string, linkCount: number}>} */
+	const raw = [];
+
 	const liPattern = /<li[^>]*>([\s\S]*?)<\/li>/gi;
 	let match;
 
 	while ((match = liPattern.exec(html)) !== null) {
 		const liHtml = match[1];
 
-		// Skip nested lists (sub-items within a list item)
 		if (/<ul/i.test(liHtml)) continue;
 
-		// Count wiki links before stripping HTML (significance signal)
 		const linkCount = (liHtml.match(/<a[^>]+href="\/wiki\//gi) || []).length;
 
-		// Extract the first link's title and href for the "Read more" feature
 		const linkMatch = liHtml.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
 		const pageTitle = linkMatch ? decodeURIComponent(linkMatch[1]).replace(/_/g, ' ') : undefined;
 		const pageUrl = linkMatch
 			? `https://en.wikipedia.org/wiki/${linkMatch[1]}`
 			: undefined;
 
-		// Strip HTML tags to get plain text
 		const text = liHtml
 			.replace(/<[^>]+>/g, '')
 			.replace(/&nbsp;/g, ' ')
@@ -392,11 +512,20 @@ function parseYearArticleEvents(html, year) {
 		const cleanedText = filterEventText(text);
 		if (cleanedText === null) continue;
 
-		const significance = scoreSignificance(cleanedText, linkCount);
-		events.push({ year, text: cleanedText, pageTitle, pageUrl, significance });
+		raw.push({ text: cleanedText, pageTitle, pageUrl, linkCount });
 	}
 
-	return events;
+	// Dynamic cap: normalise link counts relative to the most-linked event
+	const maxLinks = raw.length > 0
+		? Math.max(...raw.map(e => e.linkCount))
+		: 1;
+
+	return raw.map(({ text, pageTitle, pageUrl, linkCount }) => {
+		const significance = scoreSignificance(text, linkCount, maxLinks);
+		return /** @type {import('./types.js').HistoricalEvent} */ (
+			{ year, text, pageTitle, pageUrl, significance }
+		);
+	});
 }
 
 /**

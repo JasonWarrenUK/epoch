@@ -130,38 +130,45 @@ export function filterEventText(text) {
 /** @type {Array<[RegExp, number]>} */
 const KEYWORD_WEIGHTS = [
 	// High significance (1.0)
-	[/\b(war|revolution|independence|constitution|coronation|abdication|assassination|invasion|civil\s+war)\b/i, 1.0],
-	// Medium-high significance (0.7)
-	[/\b(battle|treaty|siege|rebellion|revolt|reform|act\s+of\s+parliament|famine|plague|earthquake|fire|massacre|crusade|edict|decree)\b/i, 0.7],
-	// Medium significance (0.4)
-	[/\b(founded|established|charter|expedition|alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.4],
+	[/\b(war|revolution|independence|constitution|coronation|abdication|assassination|invasion|civil\s+war|coup|genocide)\b/i, 1.0],
+	// Medium significance (0.5)
+	[/\b(battle|treaty|siege|rebellion|revolt|uprising|reform|act\s+of\s+parliament|famine|plague|earthquake|fire|massacre|crusade|edict|decree)\b/i, 0.5],
+	// Lower significance (0.25)
+	[/\b(founded|established|charter|expedition|exploration|discovery|alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.25],
 ];
+
+/** Default link cap when no dynamic cap is provided. */
+const DEFAULT_MAX_LINKS = 10;
 
 /**
  * Compute a 0–1 significance score for an event.
  *
  * Combines three signals:
- * - **Link count** (50% weight): Number of Wikipedia links in the original HTML.
- *   More links = more interconnected/notable. Capped at 8.
- * - **Text length** (20% weight): Longer descriptions suggest more notable events.
- *   Capped at 200 characters.
- * - **Keyword weight** (30% weight): Presence of historically significant terms.
- *   Takes the highest matching weight.
+ * - **Keyword weight** (60%): Additive — matching multiple tiers stacks
+ *   (capped at 1.0). A single tier-1 match saturates; two tier-2 matches
+ *   combine to the same level.
+ * - **Link count** (25%): Number of Wikipedia links, normalised against
+ *   `maxLinks` (dynamic cap based on the article's highest link count,
+ *   or DEFAULT_MAX_LINKS). Secondary signal only.
+ * - **Text length** (15%): Longer descriptions suggest more notable events.
+ *   Capped at 200 characters. Tiebreaker at best.
  *
  * @param {string} text       The cleaned event text.
  * @param {number} linkCount  Number of wiki links found in the original HTML.
+ * @param {number} [maxLinks] Dynamic link cap (defaults to DEFAULT_MAX_LINKS).
  * @returns {number}          Score between 0 and 1.
  */
-export function scoreSignificance(text, linkCount) {
-	const linkScore = Math.min(linkCount / 8, 1);
+export function scoreSignificance(text, linkCount, maxLinks = DEFAULT_MAX_LINKS) {
+	const linkScore = Math.min(linkCount / Math.max(maxLinks, 1), 1);
 	const lengthScore = Math.min(text.length / 200, 1);
 
 	let keywordScore = 0;
 	for (const [pattern, weight] of KEYWORD_WEIGHTS) {
 		if (pattern.test(text)) {
-			keywordScore = Math.max(keywordScore, weight);
+			keywordScore += weight;
 		}
 	}
+	keywordScore = Math.min(keywordScore, 1);
 
-	return linkScore * 0.5 + lengthScore * 0.2 + keywordScore * 0.3;
+	return keywordScore * 0.6 + linkScore * 0.25 + lengthScore * 0.15;
 }
