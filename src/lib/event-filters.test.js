@@ -185,8 +185,8 @@ describe('isSportsEvent', () => {
 // ── scoreSignificance ────────────────────────────────────────────
 
 describe('scoreSignificance', () => {
-	it('returns 0 for no links, short text, no keywords', () => {
-		expect(scoreSignificance('A minor local event here', 0)).toBeCloseTo(0.024, 2);
+	it('returns near-zero for no links, short text, no keywords', () => {
+		expect(scoreSignificance('A minor local event here', 0)).toBeCloseTo(0.018, 2);
 	});
 
 	it('scores higher with more links', () => {
@@ -202,10 +202,23 @@ describe('scoreSignificance', () => {
 		expect(withKeyword).toBeGreaterThan(noKeyword);
 	});
 
-	it('caps link score at 8 links', () => {
-		const at8 = scoreSignificance('Some event text for testing', 8);
+	it('accumulates keyword scores across tiers', () => {
+		const oneTier = scoreSignificance('The battle raged on across the land and hills', 2);
+		const twoTiers = scoreSignificance('The battle ended with a treaty signed at dawn', 2);
+		expect(twoTiers).toBeGreaterThan(oneTier);
+	});
+
+	it('caps link score at maxLinks (default 10)', () => {
+		const at10 = scoreSignificance('Some event text for testing', 10);
 		const at20 = scoreSignificance('Some event text for testing', 20);
-		expect(at8).toBeCloseTo(at20, 5);
+		expect(at10).toBeCloseTo(at20, 5);
+	});
+
+	it('supports dynamic link cap via third argument', () => {
+		// With maxLinks=4, 4 links saturates; with default (10), it does not
+		const withDynamic = scoreSignificance('Some event text for testing', 4, 4);
+		const withDefault = scoreSignificance('Some event text for testing', 4);
+		expect(withDynamic).toBeGreaterThan(withDefault);
 	});
 
 	it('returns a value between 0 and 1', () => {

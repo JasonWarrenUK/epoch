@@ -17,6 +17,12 @@
  */
 
 /**
+ * @typedef {Object} LifetimeSummaryPhase
+ * @property {string} label
+ * @property {HistoricalEvent} event
+ */
+
+/**
  * @typedef {Object} OralHistoryLayer
  * @property {string} label
  * @property {number} elderBirthYear

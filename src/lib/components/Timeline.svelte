@@ -1,7 +1,7 @@
 <script>
 	import EventCard from './EventCard.svelte';
-	/** @type {{ oralHistory?: import('$lib/types.js').OralHistoryLayer[] }} */
-	let { character, events, oralHistory = [] } = $props();
+	/** @type {{ oralHistory?: import('$lib/types.js').OralHistoryLayer[], lifetimeSummary?: import('$lib/types.js').LifetimeSummaryPhase[] }} */
+	let { character, events, oralHistory = [], lifetimeSummary = [] } = $props();
 
 	const TOP_N = 5;
 
@@ -125,46 +125,6 @@
 		return year === character.birthYear || year === character.deathYear;
 	}
 
-	// Lifetime summary: most significant event from each life phase
-	const lifetimeSummary = $derived.by(() => {
-		const lifespan = character.deathYear - character.birthYear;
-
-		/** @type {Array<{label: string, event: import('$lib/types.js').HistoricalEvent}>} */
-		const phases = [];
-
-		// Define age boundaries based on lifespan length
-		const adulthoodStart = Math.min(18, lifespan);
-		const oldAgeStart = Math.min(60, lifespan);
-
-		/** @param {number} minAge @param {number} maxAge */
-		const bestInRange = (minAge, maxAge) => {
-			let best = null;
-			for (const e of events) {
-				const age = e.year - character.birthYear;
-				if (age >= minAge && age <= maxAge) {
-					if (!best || (e.significance ?? 0) > (best.significance ?? 0)) best = e;
-				}
-			}
-			return best;
-		};
-
-		if (adulthoodStart > 0) {
-			const e = bestInRange(0, adulthoodStart - 1);
-			if (e) phases.push({ label: 'Childhood', event: e });
-		}
-
-		if (oldAgeStart > adulthoodStart) {
-			const e = bestInRange(adulthoodStart, oldAgeStart - 1);
-			if (e) phases.push({ label: 'Adulthood', event: e });
-		}
-
-		if (lifespan >= oldAgeStart) {
-			const e = bestInRange(oldAgeStart, lifespan);
-			if (e) phases.push({ label: 'Old age', event: e });
-		}
-
-		return phases;
-	});
 </script>
 
 <section class="mt-10 animate-fade-in">

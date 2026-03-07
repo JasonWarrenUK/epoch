@@ -1,5 +1,5 @@
 import { fail } from '@sveltejs/kit';
-import { fetchEventsForLifetime, fetchOralHistory } from '$lib/wikipedia.js';
+import { fetchEventsForLifetime, fetchLifetimeSummary, fetchOralHistory } from '$lib/wikipedia.js';
 
 /** @type {import('./$types').Actions} */
 export const actions = {
@@ -40,7 +40,8 @@ export const actions = {
 				fetchEventsForLifetime(birthYear, deathYear, location),
 				fetchOralHistory(birthYear, location),
 			]);
-			return { character, events, oralHistory };
+			const lifetimeSummary = await fetchLifetimeSummary(events, birthYear, deathYear);
+			return { character, events, oralHistory, lifetimeSummary };
 		} catch (err) {
 			console.error('Wikipedia API error:', err);
 			return fail(500, { error: 'Failed to fetch historical events. Please try again.' });
