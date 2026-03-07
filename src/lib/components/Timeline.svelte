@@ -145,7 +145,7 @@
 
 	{#if lifetimeSummary.length > 0}
 		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
-			<h3 class="font-serif text-2xl text-primary text-center">A Life in Three Acts</h3>
+			<h3 class="font-serif text-2xl text-primary text-center">{character.name} lived through&hellip;</h3>
 
 			<div class="grid gap-4 max-w-[36rem] mx-auto">
 				{#each lifetimeSummary as phase}
@@ -231,6 +231,24 @@
 
 					<!-- Years within decade -->
 					{#if expandedDecades.has(decade)}
+						<!-- Decade top events summary -->
+						<div class="mt-4 ml-4 mb-4 bg-base-200 rounded-lg p-4 space-y-2">
+							<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content">Top events this decade</p>
+							{#each topYears as { year, events: yearEvents }}
+								{#each yearEvents as event}
+									<div class="text-sm text-base-content">
+										<span class="font-serif font-bold text-primary">{year}</span>
+										<span class="text-xs text-neutral-content">(age {year - character.birthYear})</span>
+										&mdash; {event.text}
+										{#if event.pageUrl}
+											<a href={event.pageUrl} target="_blank" rel="noopener noreferrer"
+												class="text-xs text-secondary hover:underline ml-1">Read more</a>
+										{/if}
+									</div>
+								{/each}
+							{/each}
+						</div>
+
 						<div class="mt-4 ml-4 space-y-4 animate-collapse-open">
 							{#snippet yearList(years)}
 								{#each years as { year, events: yearEvents }}

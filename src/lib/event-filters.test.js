@@ -10,6 +10,8 @@ import {
 	isSportsEvent,
 	filterEventText,
 	scoreSignificance,
+	hasNamedEventPrefix,
+	detectCategory,
 } from './event-filters.js';
 
 // ── cleanCitations ───────────────────────────────────────────────
@@ -182,11 +184,69 @@ describe('isSportsEvent', () => {
 	});
 });
 
+// ── hasNamedEventPrefix ─────────────────────────────────────────
+
+describe('hasNamedEventPrefix', () => {
+	it.each([
+		'Gunpowder Plot: Five Catholic conspirators are arrested',
+		'Great Fire of London: The fire begins in Pudding Lane',
+		'English Civil War: King Charles raises his standard',
+		"Nine Years' War: The Grand Alliance is formed",
+		'Peace of Westphalia – The treaties are signed',
+	])('detects named event in "%s"', (text) => {
+		expect(hasNamedEventPrefix(text)).toBe(true);
+	});
+
+	it.each([
+		'The king signs a treaty in Paris with great ceremony',
+		'A fire breaks out in the capital city of London',
+		'January 15 – A major battle takes place at dawn',
+		'Parliament is dissolved by royal decree today',
+	])('does not match plain sentence "%s"', (text) => {
+		expect(hasNamedEventPrefix(text)).toBe(false);
+	});
+});
+
+// ── detectCategory ──────────────────────────────────────────────
+
+describe('detectCategory', () => {
+	it('detects conflict category', () => {
+		expect(detectCategory('The war breaks out between nations')).toBe('conflict');
+	});
+
+	it('detects upheaval category', () => {
+		expect(detectCategory('A revolution overthrows the government')).toBe('upheaval');
+	});
+
+	it('detects political category', () => {
+		expect(detectCategory('The coronation of King Charles takes place')).toBe('political');
+	});
+
+	it('detects disaster category', () => {
+		expect(detectCategory('A great famine strikes the entire region')).toBe('disaster');
+	});
+
+	it('detects cultural category', () => {
+		expect(detectCategory('A new university is founded in the city')).toBe('cultural');
+	});
+
+	it('returns highest-weight category when multiple match', () => {
+		// "war" is tier-1 conflict, "treaty" is tier-2 political
+		expect(detectCategory('The war ends with a treaty signed')).toBe('conflict');
+	});
+
+	it('returns null for no keyword match', () => {
+		expect(detectCategory('A minor local event happens here')).toBeNull();
+	});
+});
+
 // ── scoreSignificance ────────────────────────────────────────────
 
 describe('scoreSignificance', () => {
 	it('returns near-zero for no links, short text, no keywords', () => {
-		expect(scoreSignificance('A minor local event here', 0)).toBeCloseTo(0.018, 2);
+		// Only length score: (24/200) * 0.15 ≈ 0.018
+		const score = scoreSignificance('A minor local event here', 0);
+		expect(score).toBeCloseTo(0.018, 2);
 	});
 
 	it('scores higher with more links', () => {
@@ -214,9 +274,9 @@ describe('scoreSignificance', () => {
 		expect(at10).toBeCloseTo(at20, 5);
 	});
 
-	it('supports dynamic link cap via third argument', () => {
+	it('supports dynamic link cap via opts.maxLinks', () => {
 		// With maxLinks=4, 4 links saturates; with default (10), it does not
-		const withDynamic = scoreSignificance('Some event text for testing', 4, 4);
+		const withDynamic = scoreSignificance('Some event text for testing', 4, { maxLinks: 4 });
 		const withDefault = scoreSignificance('Some event text for testing', 4);
 		expect(withDynamic).toBeGreaterThan(withDefault);
 	});
@@ -227,12 +287,38 @@ describe('scoreSignificance', () => {
 		expect(score).toBeLessThanOrEqual(1);
 	});
 
-	it('gives highest score to high-keyword events with many links', () => {
-		const score = scoreSignificance(
-			'The revolution overthrows the monarchy in a dramatic series of events across the entire nation',
-			8
+	it('named events score higher than unnamed events', () => {
+		const named = scoreSignificance('English Civil War: The king raises his standard at Nottingham', 4);
+		const unnamed = scoreSignificance('The king raises his standard at Nottingham during the conflict', 4);
+		expect(named).toBeGreaterThan(unnamed);
+	});
+
+	it('parent events score higher than child events', () => {
+		const parent = scoreSignificance(
+			'Second Anglo-Dutch War: Major conflict between England and Netherlands',
+			3,
+			{ isParent: true, childCount: 4 },
 		);
-		expect(score).toBeGreaterThan(0.8);
+		const child = scoreSignificance(
+			'Admiral Crijnssen arrives at Surinam with a fleet',
+			2,
+			{ isChild: true },
+		);
+		expect(parent).toBeGreaterThan(child);
+	});
+
+	it('child events receive 0.5x penalty', () => {
+		const text = 'A significant battle takes place in the northern territory';
+		const normal = scoreSignificance(text, 3);
+		const asChild = scoreSignificance(text, 3, { isChild: true });
+		expect(asChild).toBeCloseTo(normal * 0.5, 5);
+	});
+
+	it('parent structure score scales with child count', () => {
+		const text = 'A major war breaks out across the continent and beyond';
+		const fewChildren = scoreSignificance(text, 3, { isParent: true, childCount: 1 });
+		const manyChildren = scoreSignificance(text, 3, { isParent: true, childCount: 5 });
+		expect(manyChildren).toBeGreaterThan(fewChildren);
 	});
 });
 

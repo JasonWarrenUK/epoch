@@ -125,43 +125,108 @@ export function filterEventText(text) {
 	return cleaned;
 }
 
+// ── Named-event detection ────────────────────────────────────────
+
+/**
+ * Pattern for Wikipedia's named-event prefix convention.
+ * Matches: "Gunpowder Plot: ...", "Peace of Cateau Cambrésis – ...",
+ *          "Nine Years' War: ..."
+ * Requires at least two capitalized words (or "X of Y" pattern) before
+ * a colon or dash separator to avoid false positives on plain sentences.
+ */
+const NAMED_EVENT_RE = /^(?:[A-Z][A-Za-z']+(?:\s+(?:of|the|in|at|on|and|de|du|des|la|le))?(?:\s+|(?=[:–—])))+[:–—]\s/;
+
+/**
+ * Detect whether text starts with a named event pattern.
+ * Wikipedia editors only name events that are independently notable.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function hasNamedEventPrefix(text) {
+	return NAMED_EVENT_RE.test(text);
+}
+
 // ── Significance scoring ─────────────────────────────────────────
 
-/** @type {Array<[RegExp, number]>} */
+/** @type {Array<[RegExp, number, string]>} */
 const KEYWORD_WEIGHTS = [
 	// High significance (1.0)
-	[/\b(war|revolution|independence|constitution|coronation|abdication|assassination|invasion|civil\s+war|coup|genocide)\b/i, 1.0],
+	[/\b(war|civil\s+war|invasion|genocide)\b/i, 1.0, 'conflict'],
+	[/\b(revolution|independence|coup)\b/i, 1.0, 'upheaval'],
+	[/\b(constitution|coronation|abdication|assassination)\b/i, 1.0, 'political'],
 	// Medium significance (0.5)
-	[/\b(battle|treaty|siege|rebellion|revolt|uprising|reform|act\s+of\s+parliament|famine|plague|earthquake|fire|massacre|crusade|edict|decree)\b/i, 0.5],
+	[/\b(battle|siege|massacre|crusade)\b/i, 0.5, 'conflict'],
+	[/\b(treaty|edict|decree|act\s+of\s+parliament)\b/i, 0.5, 'political'],
+	[/\b(rebellion|revolt|uprising|reform)\b/i, 0.5, 'upheaval'],
+	[/\b(famine|plague|earthquake|fire)\b/i, 0.5, 'disaster'],
 	// Lower significance (0.25)
-	[/\b(founded|established|charter|expedition|exploration|discovery|alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.25],
+	[/\b(founded|established|charter|expedition|exploration|discovery)\b/i, 0.25, 'cultural'],
+	[/\b(alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.25, 'political'],
 ];
 
 /** Default link cap when no dynamic cap is provided. */
 const DEFAULT_MAX_LINKS = 10;
 
 /**
+ * Detect the dominant keyword category for an event.
+ * Returns the category of the highest-weight matching keyword, or null.
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function detectCategory(text) {
+	let bestCategory = null;
+	let bestWeight = 0;
+	for (const [pattern, weight, category] of KEYWORD_WEIGHTS) {
+		if (pattern.test(text) && weight > bestWeight) {
+			bestWeight = weight;
+			bestCategory = category;
+		}
+	}
+	return bestCategory;
+}
+
+/**
  * Compute a 0–1 significance score for an event.
  *
- * Combines three signals:
- * - **Keyword weight** (60%): Additive — matching multiple tiers stacks
- *   (capped at 1.0). A single tier-1 match saturates; two tier-2 matches
- *   combine to the same level.
+ * Combines five signals:
+ * - **Named event prefix** (30%): Wikipedia editors name notable events
+ *   (e.g. "Gunpowder Plot: ..."). Strongest editorial signal.
  * - **Link count** (25%): Number of Wikipedia links, normalised against
- *   `maxLinks` (dynamic cap based on the article's highest link count,
- *   or DEFAULT_MAX_LINKS). Secondary signal only.
- * - **Text length** (15%): Longer descriptions suggest more notable events.
- *   Capped at 200 characters. Tiebreaker at best.
+ *   `maxLinks`. Proxy for connectedness.
+ * - **Text length** (15%): Longer descriptions suggest more coverage.
+ *   Capped at 200 characters.
+ * - **Parent structure** (15%): Parent events with sub-events are
+ *   structurally more important. Scales with child count.
+ * - **Keywords** (15%): Additive keyword matching, demoted from 60%.
+ *   Tiebreaker only — can't distinguish famous from obscure.
+ *
+ * Child events receive a 0.5x penalty on the final score.
  *
  * @param {string} text       The cleaned event text.
  * @param {number} linkCount  Number of wiki links found in the original HTML.
- * @param {number} [maxLinks] Dynamic link cap (defaults to DEFAULT_MAX_LINKS).
+ * @param {object} [opts]     Scoring options.
+ * @param {number} [opts.maxLinks]    Dynamic link cap (defaults to 10).
+ * @param {boolean} [opts.isParent]   Whether this is a parent event with sub-events.
+ * @param {boolean} [opts.isChild]    Whether this is a child sub-event.
+ * @param {number} [opts.childCount]  Number of child sub-events (for parents).
  * @returns {number}          Score between 0 and 1.
  */
-export function scoreSignificance(text, linkCount, maxLinks = DEFAULT_MAX_LINKS) {
+export function scoreSignificance(text, linkCount, opts = {}) {
+	const { maxLinks = DEFAULT_MAX_LINKS, isParent = false, isChild = false, childCount = 0 } = opts;
+
+	// Named event prefix: binary 0 or 1
+	const namedScore = hasNamedEventPrefix(text) ? 1 : 0;
+
+	// Link count: normalised against article max
 	const linkScore = Math.min(linkCount / Math.max(maxLinks, 1), 1);
+
+	// Text length: normalised at 200 chars
 	const lengthScore = Math.min(text.length / 200, 1);
 
+	// Parent structure: parents with more children are more significant
+	const structureScore = isParent ? Math.min(childCount / 5, 1) : 0;
+
+	// Keywords: demoted to tiebreaker
 	let keywordScore = 0;
 	for (const [pattern, weight] of KEYWORD_WEIGHTS) {
 		if (pattern.test(text)) {
@@ -170,5 +235,14 @@ export function scoreSignificance(text, linkCount, maxLinks = DEFAULT_MAX_LINKS)
 	}
 	keywordScore = Math.min(keywordScore, 1);
 
-	return keywordScore * 0.6 + linkScore * 0.25 + lengthScore * 0.15;
+	let score = namedScore * 0.30
+		+ linkScore * 0.25
+		+ lengthScore * 0.15
+		+ structureScore * 0.15
+		+ keywordScore * 0.15;
+
+	// Penalty for child events: they are sub-events of something bigger
+	if (isChild) score *= 0.5;
+
+	return score;
 }

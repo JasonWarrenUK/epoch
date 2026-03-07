@@ -1,4 +1,4 @@
-import { filterEventText, scoreSignificance } from './event-filters.js';
+import { filterEventText, scoreSignificance, detectCategory } from './event-filters.js';
 
 const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
 const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/JasonWarrenUK/epoch)';
@@ -279,10 +279,33 @@ export async function fetchLifetimeSummary(events, birthYear, deathYear) {
 
 	/** @type {import('./types.js').LifetimeSummaryPhase[]} */
 	const results = [];
+	const usedTitles = new Set();
+	const usedCategories = new Set();
 
 	for (const phase of phases) {
-		const best = await pickBestEvent(eventsInRange(phase.minAge, phase.maxAge));
-		if (best) results.push({ label: phase.label, event: best });
+		const phaseEvents = eventsInRange(phase.minAge, phase.maxAge);
+
+		// Penalise same-title and same-category events from prior phases
+		const adjusted = phaseEvents.map(e => {
+			let penalty = 1;
+			if (e.pageTitle && usedTitles.has(e.pageTitle)) penalty *= 0.3;
+			const cat = e.category ?? detectCategory(e.text);
+			// Only penalise same-category if the event isn't highly significant.
+			// Major events (e.g. WWI, WWII) bypass the penalty.
+			if (cat && usedCategories.has(cat) && (e.significance ?? 0) < 0.6) {
+				penalty *= 0.5;
+			}
+			if (penalty === 1) return e;
+			return { ...e, significance: (e.significance ?? 0) * penalty };
+		});
+
+		const best = await pickBestEvent(adjusted);
+		if (best) {
+			results.push({ label: phase.label, event: best });
+			if (best.pageTitle) usedTitles.add(best.pageTitle);
+			const bestCat = best.category ?? detectCategory(best.text);
+			if (bestCat) usedCategories.add(bestCat);
+		}
 	}
 
 	return results;
@@ -385,15 +408,15 @@ async function fetchArticleSizes(titles) {
 	return sizes;
 }
 
-/** Number of top candidates to consider for article-size tiebreaking. */
-const TOP_CANDIDATES = 5;
+/** Number of top candidates to consider for article-size ranking. */
+const TOP_CANDIDATES = 10;
 
 /** Article size (bytes) that saturates the size score. */
 const ARTICLE_SIZE_CAP = 50_000;
 
 /**
- * Pick the most significant event from a list, using article size
- * as a tiebreaker for the top candidates.
+ * Pick the most significant event from a list. Article size is a
+ * primary signal (40% of final score), not just a tiebreaker.
  *
  * @param {import('./types.js').HistoricalEvent[]} events
  * @returns {Promise<import('./types.js').HistoricalEvent | null>}
@@ -418,7 +441,8 @@ async function pickBestEvent(events) {
 		const sig = event.significance ?? 0;
 		const articleSize = event.pageTitle ? (sizes.get(event.pageTitle) ?? 0) : 0;
 		const sizeScore = Math.min(articleSize / ARTICLE_SIZE_CAP, 1);
-		const finalScore = sig + sizeScore * 0.3;
+		// Article size is a primary signal, not just a tiebreaker
+		const finalScore = sig * 0.6 + sizeScore * 0.4;
 		if (finalScore > bestScore) {
 			bestScore = finalScore;
 			best = event;
@@ -472,47 +496,160 @@ function resolveWikiCountry(location) {
  * @param {number} year
  * @returns {import('./types.js').HistoricalEvent[]}
  */
+/**
+ * Strip HTML tags and decode common HTML entities.
+ * @param {string} html
+ * @returns {string}
+ */
+function stripHtmlAndDecode(html) {
+	return html
+		.replace(/<[^>]+>/g, '')
+		.replace(/&nbsp;/g, ' ')
+		.replace(/&ndash;/g, '–')
+		.replace(/&mdash;/g, '—')
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/**
+ * Extract the first wiki link's page title and URL from an HTML fragment.
+ * @param {string} html
+ * @returns {{ pageTitle?: string, pageUrl?: string }}
+ */
+function extractFirstWikiLink(html) {
+	const linkMatch = html.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
+	if (!linkMatch) return {};
+	return {
+		pageTitle: decodeURIComponent(linkMatch[1]).replace(/_/g, ' '),
+		pageUrl: `https://en.wikipedia.org/wiki/${linkMatch[1]}`,
+	};
+}
+
+/**
+ * Extract top-level <li> items from HTML using depth tracking.
+ * Only yields depth-0 items with their full inner HTML (including nested lists).
+ * @param {string} html
+ * @returns {string[]}
+ */
+function extractTopLevelListItems(html) {
+	const items = [];
+	const openTag = /<li[^>]*>/gi;
+	const closeTag = /<\/li>/gi;
+
+	// Find all <li> and </li> positions
+	/** @type {Array<{pos: number, type: 'open' | 'close', end: number}>} */
+	const tokens = [];
+	let m;
+	while ((m = openTag.exec(html)) !== null) {
+		tokens.push({ pos: m.index, type: 'open', end: m.index + m[0].length });
+	}
+	while ((m = closeTag.exec(html)) !== null) {
+		tokens.push({ pos: m.index, type: 'close', end: m.index + m[0].length });
+	}
+	tokens.sort((a, b) => a.pos - b.pos);
+
+	let depth = 0;
+	let contentStart = -1;
+
+	for (const token of tokens) {
+		if (token.type === 'open') {
+			if (depth === 0) {
+				contentStart = token.end; // start of inner content
+			}
+			depth++;
+		} else {
+			depth--;
+			if (depth === 0 && contentStart >= 0) {
+				items.push(html.slice(contentStart, token.pos));
+				contentStart = -1;
+			}
+		}
+	}
+
+	return items;
+}
+
 function parseYearArticleEvents(html, year) {
 	// Two-pass approach: first extract events with raw link counts,
 	// then score using a dynamic link cap based on the article's max.
 
-	/** @type {Array<{text: string, pageTitle?: string, pageUrl?: string, linkCount: number}>} */
+	/** @type {Array<{text: string, pageTitle?: string, pageUrl?: string, linkCount: number, isParent: boolean, isChild: boolean, childCount: number}>} */
 	const raw = [];
 
-	const liPattern = /<li[^>]*>([\s\S]*?)<\/li>/gi;
-	let match;
+	const topLevelItems = extractTopLevelListItems(html);
 
-	while ((match = liPattern.exec(html)) !== null) {
-		const liHtml = match[1];
+	for (const liHtml of topLevelItems) {
+		const hasNestedList = /<ul/i.test(liHtml);
 
-		if (/<ul/i.test(liHtml)) continue;
+		if (hasNestedList) {
+			// PARENT EVENT: extract text before the nested <ul>
+			const parentHtml = liHtml.replace(/<ul[\s\S]*$/i, '');
+			const parentText = stripHtmlAndDecode(parentHtml);
+			const parentLinkCount = (parentHtml.match(/<a[^>]+href="\/wiki\//gi) || []).length;
 
+			// Count child <li> items
+			const childUlMatch = liHtml.match(/<ul[^>]*>([\s\S]*?)<\/ul>/i);
+			const childLiCount = childUlMatch
+				? (childUlMatch[1].match(/<li/gi) || []).length
+				: 0;
+
+			// Process parent text through filter
+			const cleanedParent = filterEventText(parentText);
+			if (cleanedParent) {
+				const { pageTitle, pageUrl } = extractFirstWikiLink(parentHtml);
+				raw.push({
+					text: cleanedParent,
+					pageTitle,
+					pageUrl,
+					linkCount: parentLinkCount,
+					isParent: true,
+					isChild: false,
+					childCount: childLiCount,
+				});
+			}
+
+			// Also extract children (marked as child events)
+			if (childUlMatch) {
+				const childLiPattern = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+				let childLi;
+				while ((childLi = childLiPattern.exec(childUlMatch[1])) !== null) {
+					// Skip deeply nested children
+					if (/<ul/i.test(childLi[1])) continue;
+
+					const childText = stripHtmlAndDecode(childLi[1]);
+					const cleanedChild = filterEventText(childText);
+					if (!cleanedChild) continue;
+
+					const childLinkCount = (childLi[1].match(/<a[^>]+href="\/wiki\//gi) || []).length;
+					const { pageTitle, pageUrl } = extractFirstWikiLink(childLi[1]);
+					raw.push({
+						text: cleanedChild,
+						pageTitle,
+						pageUrl,
+						linkCount: childLinkCount,
+						isParent: false,
+						isChild: true,
+						childCount: 0,
+					});
+				}
+			}
+			continue;
+		}
+
+		// FLAT EVENT (no nested list)
 		const linkCount = (liHtml.match(/<a[^>]+href="\/wiki\//gi) || []).length;
-
-		const linkMatch = liHtml.match(/<a[^>]+href="\/wiki\/([^"#]+)"[^>]*>([^<]+)<\/a>/);
-		const pageTitle = linkMatch ? decodeURIComponent(linkMatch[1]).replace(/_/g, ' ') : undefined;
-		const pageUrl = linkMatch
-			? `https://en.wikipedia.org/wiki/${linkMatch[1]}`
-			: undefined;
-
-		const text = liHtml
-			.replace(/<[^>]+>/g, '')
-			.replace(/&nbsp;/g, ' ')
-			.replace(/&ndash;/g, '–')
-			.replace(/&mdash;/g, '—')
-			.replace(/&amp;/g, '&')
-			.replace(/&lt;/g, '<')
-			.replace(/&gt;/g, '>')
-			.replace(/&quot;/g, '"')
-			.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-			.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-			.replace(/\s+/g, ' ')
-			.trim();
-
+		const text = stripHtmlAndDecode(liHtml);
 		const cleanedText = filterEventText(text);
 		if (cleanedText === null) continue;
 
-		raw.push({ text: cleanedText, pageTitle, pageUrl, linkCount });
+		const { pageTitle, pageUrl } = extractFirstWikiLink(liHtml);
+		raw.push({ text: cleanedText, pageTitle, pageUrl, linkCount, isParent: false, isChild: false, childCount: 0 });
 	}
 
 	// Dynamic cap: normalise link counts relative to the most-linked event
@@ -520,10 +657,11 @@ function parseYearArticleEvents(html, year) {
 		? Math.max(...raw.map(e => e.linkCount))
 		: 1;
 
-	return raw.map(({ text, pageTitle, pageUrl, linkCount }) => {
-		const significance = scoreSignificance(text, linkCount, maxLinks);
+	return raw.map(({ text, pageTitle, pageUrl, linkCount, isParent, isChild, childCount }) => {
+		const significance = scoreSignificance(text, linkCount, { maxLinks, isParent, isChild, childCount });
+		const category = detectCategory(text) ?? undefined;
 		return /** @type {import('./types.js').HistoricalEvent} */ (
-			{ year, text, pageTitle, pageUrl, significance }
+			{ year, text, pageTitle, pageUrl, significance, isParent, isChild, category }
 		);
 	});
 }
