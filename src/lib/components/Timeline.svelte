@@ -8,7 +8,14 @@
 	let expandedYears = $state(new Set());
 	let showAllDecades = $state(new Set());
 
+	const pinnedYears = $derived(new Set([
+		character.birthYear,
+		character.birthYear + 18,
+		character.deathYear,
+	]));
+
 	// Group events by decade, then by year, sorted by significance
+	// Pinned years (birth, 18th birthday, death) always appear in top
 	let decades = $derived.by(() => {
 		/** @type {Map<number, import('$lib/types.js').HistoricalEvent[]>} */
 		const decadeMap = new Map();
@@ -26,10 +33,26 @@
 				const sorted = [...decadeEvents].sort((a, b) =>
 					(b.significance ?? 0) - (a.significance ?? 0) || a.year - b.year
 				);
-				const top = sorted.slice(0, TOP_N);
-				const rest = sorted.slice(TOP_N);
 
-				// Group top events by year for display
+				// Pinned events go to top regardless of score
+				/** @type {import('$lib/types.js').HistoricalEvent[]} */
+				const top = [];
+				/** @type {import('$lib/types.js').HistoricalEvent[]} */
+				const rest = [];
+				const pinnedInTop = new Set();
+
+				for (const event of sorted) {
+					if (pinnedYears.has(event.year) && !pinnedInTop.has(event.year)) {
+						top.push(event);
+						pinnedInTop.add(event.year);
+					} else if (top.length < TOP_N) {
+						top.push(event);
+					} else {
+						rest.push(event);
+					}
+				}
+
+				// Group events by year for display
 				const groupByYear = (/** @type {import('$lib/types.js').HistoricalEvent[]} */ evts) => {
 					/** @type {Map<number, import('$lib/types.js').HistoricalEvent[]>} */
 					const yearMap = new Map();
@@ -42,6 +65,11 @@
 						.map(([year, yearEvents]) => ({ year, events: yearEvents }));
 				};
 
+				// Age range for this decade
+				const years = decadeEvents.map(e => e.year);
+				const minAge = Math.min(...years) - character.birthYear;
+				const maxAge = Math.max(...years) - character.birthYear;
+
 				return {
 					decade,
 					topYears: groupByYear(top),
@@ -49,6 +77,7 @@
 					topCount: top.length,
 					restCount: rest.length,
 					eventCount: decadeEvents.length,
+					ageRange: minAge === maxAge ? `age ${minAge}` : `ages ${minAge}–${maxAge}`,
 				};
 			});
 	});
@@ -118,7 +147,7 @@
 			<!-- Vertical connecting line -->
 			<div class="absolute left-3 top-0 bottom-0 w-px border-l-2 border-dashed border-neutral"></div>
 
-			{#each decades as { decade, topYears, restYears, topCount, restCount, eventCount }, di}
+			{#each decades as { decade, topYears, restYears, topCount, restCount, eventCount, ageRange }, di}
 				<div class="relative mb-6">
 					<!-- Decade dot -->
 					<div class="absolute -left-5 top-1 w-4 h-4 rounded-full bg-primary shadow-sm"></div>
@@ -133,6 +162,7 @@
 						<h3 class="font-serif text-2xl text-primary">{decade}s</h3>
 						<div class="flex-1 h-px bg-base-300"></div>
 						<span class="text-xs text-neutral-content">
+							{ageRange} &middot;
 							{#if restCount > 0}
 								top {topCount} of {eventCount} event{eventCount !== 1 ? 's' : ''}
 							{:else}
@@ -168,7 +198,9 @@
 											{#if year === character.birthYear}
 												<span class="text-xs font-sans text-accent italic">born</span>
 											{:else if year === character.deathYear}
-												<span class="text-xs font-sans text-accent italic">died</span>
+												<span class="text-xs font-sans text-accent italic">died, age {year - character.birthYear}</span>
+											{:else}
+												<span class="text-xs text-neutral-content">age {year - character.birthYear}</span>
 											{/if}
 											<span class="text-xs text-neutral-content">{yearEvents.length} event{yearEvents.length !== 1 ? 's' : ''}</span>
 											<svg
