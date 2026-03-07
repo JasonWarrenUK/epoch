@@ -15,5 +15,5 @@
 </main>
 
 <footer class="py-8 px-4 text-center border-t border-base-300">
-	<p class="font-serif text-sm italic text-neutral-content">Explore history through the eyes of fiction</p>
+	<p class="font-serif text-sm italic text-neutral-content">What would you have lived through?</p>
 </footer>

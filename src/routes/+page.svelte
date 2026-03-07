@@ -9,14 +9,13 @@
 
 <svelte:head>
 	<title>Epoch</title>
-	<meta name="description" content="Create fictional characters who experience real historical events." />
+	<meta name="description" content="See history through someone's eyes." />
 </svelte:head>
 
 {#if !hasResults}
 	<section class="max-w-[40rem] mx-auto text-center mb-12 animate-fade-in">
 		<p class="font-serif text-xl text-neutral-content leading-relaxed">
-			Create fictional characters who experience real historical events.
-			Discover the world they would have known.
+			Pick a time and place, and see what history looked like from there.
 		</p>
 	</section>
 {/if}

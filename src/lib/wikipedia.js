@@ -203,6 +203,21 @@ function compileLocationPatterns(locationTerms) {
 }
 
 /**
+ * Patterns indicating an event is about a colonial or foreign location,
+ * not the user's home region. Used to reject false location matches
+ * (e.g. "British provinces in North America" shouldn't match London).
+ */
+const COLONIAL_NEGATIVES = [
+	/\b(north america|south america|americas|new england|new world|colonial america|american colon)/i,
+	/\b(east india|west indies|caribbean|atlantic crossing|pacific)\b/i,
+	/\b(virginia|massachusetts|maryland|carolina|georgia|pennsylvania|connecticut|new york colony|new jersey|rhode island|surinam|barbados|bermuda|jamaica)\b/i,
+	/\b(bengal|madras|bombay|calcutta|mughal)\b/i,
+	/\b(cape horn|cape of good hope|cape colony|natal|transvaal)\b/i,
+	/\b(south georgia|gough island|antarctic|arctic expedition)\b/i,
+	/\b(wabanaki|abenaki|pequawket|mi'kmaq|maliseet|mohawk|iroquois|cherokee|algonquin)\b/i,
+];
+
+/**
  * Check whether an event is geographically relevant to the location terms.
  *
  * @param {string} text     The event text to search.
@@ -213,10 +228,17 @@ function compileLocationPatterns(locationTerms) {
 function eventMatchesLocation(text, pageTitle, locationPatterns) {
 	const searchable = pageTitle ? `${text} ${pageTitle}` : text;
 
+	let matched = false;
 	for (const pattern of locationPatterns) {
-		if (pattern.test(searchable)) return true;
+		if (pattern.test(searchable)) { matched = true; break; }
 	}
-	return false;
+	if (!matched) return false;
+
+	// Reject if the event is actually about a colonial/foreign location
+	for (const neg of COLONIAL_NEGATIVES) {
+		if (neg.test(searchable)) return false;
+	}
+	return true;
 }
 
 /**
@@ -415,8 +437,8 @@ const TOP_CANDIDATES = 10;
 const ARTICLE_SIZE_CAP = 50_000;
 
 /**
- * Pick the most significant event from a list. Article size is a
- * primary signal (40% of final score), not just a tiebreaker.
+ * Pick the most significant event from a list. Article size is the
+ * dominant signal (50% of final score) — best proxy for recognition.
  *
  * @param {import('./types.js').HistoricalEvent[]} events
  * @returns {Promise<import('./types.js').HistoricalEvent | null>}
@@ -441,8 +463,10 @@ async function pickBestEvent(events) {
 		const sig = event.significance ?? 0;
 		const articleSize = event.pageTitle ? (sizes.get(event.pageTitle) ?? 0) : 0;
 		const sizeScore = Math.min(articleSize / ARTICLE_SIZE_CAP, 1);
-		// Article size is a primary signal, not just a tiebreaker
-		const finalScore = sig * 0.6 + sizeScore * 0.4;
+		// Article size is the dominant signal — best proxy for "have I heard of this?"
+		let finalScore = sig * 0.5 + sizeScore * 0.5;
+		// Events with no linked article are likely obscure
+		if (!event.pageTitle) finalScore *= 0.5;
 		if (finalScore > bestScore) {
 			bestScore = finalScore;
 			best = event;
