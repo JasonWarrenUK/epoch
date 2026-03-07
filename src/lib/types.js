@@ -14,6 +14,9 @@
  * @property {string} [pageUrl]
  * @property {number} [characterAge]
  * @property {number} [significance]
+ * @property {boolean} [isParent]
+ * @property {boolean} [isChild]
+ * @property {string} [category]
  */
 
 /**
