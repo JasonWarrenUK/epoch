@@ -203,22 +203,8 @@ function compileLocationPatterns(locationTerms) {
 }
 
 /**
- * Patterns indicating an event is about a colonial or foreign location,
- * not the user's home region. Used to reject false location matches
- * (e.g. "British provinces in North America" shouldn't match London).
- */
-const COLONIAL_NEGATIVES = [
-	/\b(north america|south america|americas|new england|new world|colonial america|american colon)/i,
-	/\b(east india|west indies|caribbean|atlantic crossing|pacific)\b/i,
-	/\b(virginia|massachusetts|maryland|carolina|georgia|pennsylvania|connecticut|new york colony|new jersey|rhode island|surinam|barbados|bermuda|jamaica)\b/i,
-	/\b(bengal|madras|bombay|calcutta|mughal)\b/i,
-	/\b(cape horn|cape of good hope|cape colony|natal|transvaal)\b/i,
-	/\b(south georgia|gough island|antarctic|arctic expedition)\b/i,
-	/\b(wabanaki|abenaki|pequawket|mi'kmaq|maliseet|mohawk|iroquois|cherokee|algonquin)\b/i,
-];
-
-/**
  * Check whether an event is geographically relevant to the location terms.
+ * Only used as a last resort when no country-specific article is available.
  *
  * @param {string} text     The event text to search.
  * @param {string} [pageTitle]  Optional Wikipedia page title for extra matching.
@@ -228,17 +214,10 @@ const COLONIAL_NEGATIVES = [
 function eventMatchesLocation(text, pageTitle, locationPatterns) {
 	const searchable = pageTitle ? `${text} ${pageTitle}` : text;
 
-	let matched = false;
 	for (const pattern of locationPatterns) {
-		if (pattern.test(searchable)) { matched = true; break; }
+		if (pattern.test(searchable)) return true;
 	}
-	if (!matched) return false;
-
-	// Reject if the event is actually about a colonial/foreign location
-	for (const neg of COLONIAL_NEGATIVES) {
-		if (neg.test(searchable)) return false;
-	}
-	return true;
+	return false;
 }
 
 /**
@@ -740,9 +719,13 @@ async function fetchYearArticleEvents(year, wikiCountry) {
 				return { events, fromCountryArticle: true };
 			}
 		}
+		// When we have a country, don't fall back to generic year articles.
+		// Generic articles contain worldwide events that are mostly irrelevant
+		// and impossible to filter reliably by location keywords.
+		return { events: [], fromCountryArticle: false };
 	}
 
-	// Fall back to generic year article (e.g. "1066")
+	// No country resolved — use generic year article as last resort
 	const yearTitle = String(year);
 	const sectionIdx = await findEventsSection(yearTitle);
 	if (sectionIdx !== null) {
