@@ -7,6 +7,25 @@ const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/
 const FETCH_TIMEOUT_MS = 10_000;
 
 /**
+ * Fetch with automatic retry on rate-limit (429) or server errors (5xx).
+ * Uses exponential backoff: 1s, 2s, 4s.
+ *
+ * @param {string} url
+ * @param {RequestInit} opts
+ * @param {number} [retries=3]
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, opts, retries = 3) {
+	for (let attempt = 0; ; attempt++) {
+		const res = await fetch(url, opts);
+		if (res.ok || attempt >= retries || (res.status !== 429 && res.status < 500)) {
+			return res;
+		}
+		await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+	}
+}
+
+/**
  * Maps location input terms to the Wikipedia country name used in
  * year-article titles (e.g. "1066 in England").
  * Keys are lowercase; values are title-case as used in Wikipedia.
@@ -323,7 +342,7 @@ async function findEventsSection(pageTitle) {
 		format: 'json',
 		redirects: '1',
 	});
-	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+	const res = await fetchWithRetry(`${MEDIAWIKI_API_URL}?${params}`, {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
@@ -387,7 +406,7 @@ async function fetchParsedSection(pageTitle, sectionIndex, year) {
 		format: 'json',
 		redirects: '1',
 	});
-	const res = await fetch(`${MEDIAWIKI_API_URL}?${params}`, {
+	const res = await fetchWithRetry(`${MEDIAWIKI_API_URL}?${params}`, {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
@@ -421,7 +440,7 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 	for (let y = birthYear; y <= deathYear; y++) years.push(y);
 
 	// Process in batches to respect API rate limits
-	const BATCH_SIZE = 10;
+	const BATCH_SIZE = 5;
 	for (let i = 0; i < years.length; i += BATCH_SIZE) {
 		const batch = years.slice(i, i + BATCH_SIZE);
 		const results = await Promise.allSettled(
@@ -444,9 +463,9 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 			}
 		}
 
-		// Small delay between batches to be polite to the API
+		// Delay between batches to avoid rate-limiting
 		if (i + BATCH_SIZE < years.length) {
-			await new Promise(r => setTimeout(r, 100));
+			await new Promise(r => setTimeout(r, 500));
 		}
 	}
 
