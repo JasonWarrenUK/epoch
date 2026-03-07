@@ -1,6 +1,7 @@
 <script>
 	import EventCard from './EventCard.svelte';
-	let { character, events } = $props();
+	/** @type {{ oralHistory?: import('$lib/types.js').OralHistoryLayer[] }} */
+	let { character, events, oralHistory = [] } = $props();
 
 	const TOP_N = 5;
 
@@ -65,10 +66,9 @@
 						.map(([year, yearEvents]) => ({ year, events: yearEvents }));
 				};
 
-				// Age range for this decade
-				const years = decadeEvents.map(e => e.year);
-				const minAge = Math.min(...years) - character.birthYear;
-				const maxAge = Math.max(...years) - character.birthYear;
+				// Age range for this decade (based on decade span, clamped to lifespan)
+				const minAge = Math.max(decade, character.birthYear) - character.birthYear;
+				const maxAge = Math.min(decade + 9, character.deathYear) - character.birthYear;
 
 				return {
 					decade,
@@ -124,6 +124,47 @@
 	function isSpecialYear(year) {
 		return year === character.birthYear || year === character.deathYear;
 	}
+
+	// Lifetime summary: most significant event from each life phase
+	const lifetimeSummary = $derived.by(() => {
+		const lifespan = character.deathYear - character.birthYear;
+
+		/** @type {Array<{label: string, event: import('$lib/types.js').HistoricalEvent}>} */
+		const phases = [];
+
+		// Define age boundaries based on lifespan length
+		const adulthoodStart = Math.min(18, lifespan);
+		const oldAgeStart = Math.min(60, lifespan);
+
+		/** @param {number} minAge @param {number} maxAge */
+		const bestInRange = (minAge, maxAge) => {
+			let best = null;
+			for (const e of events) {
+				const age = e.year - character.birthYear;
+				if (age >= minAge && age <= maxAge) {
+					if (!best || (e.significance ?? 0) > (best.significance ?? 0)) best = e;
+				}
+			}
+			return best;
+		};
+
+		if (adulthoodStart > 0) {
+			const e = bestInRange(0, adulthoodStart - 1);
+			if (e) phases.push({ label: 'Childhood', event: e });
+		}
+
+		if (oldAgeStart > adulthoodStart) {
+			const e = bestInRange(adulthoodStart, oldAgeStart - 1);
+			if (e) phases.push({ label: 'Adulthood', event: e });
+		}
+
+		if (lifespan >= oldAgeStart) {
+			const e = bestInRange(oldAgeStart, lifespan);
+			if (e) phases.push({ label: 'Old age', event: e });
+		}
+
+		return phases;
+	});
 </script>
 
 <section class="mt-10 animate-fade-in">
@@ -141,6 +182,56 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if lifetimeSummary.length > 0}
+		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
+			<h3 class="font-serif text-2xl text-primary text-center">A Life in Three Acts</h3>
+
+			<div class="grid gap-4 max-w-[36rem] mx-auto">
+				{#each lifetimeSummary as phase}
+					<div class="bg-base-200 rounded-lg p-5">
+						<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content mb-1">{phase.label}</p>
+						<p class="text-base-content">
+							<span class="font-serif font-bold text-primary">{phase.event.year}</span>
+							<span class="text-xs text-neutral-content">age {phase.event.year - character.birthYear}</span>
+							&mdash; {phase.event.text}
+						</p>
+						{#if phase.event.pageUrl}
+							<a href={phase.event.pageUrl} target="_blank" rel="noopener noreferrer"
+								class="text-xs text-secondary hover:underline mt-2 inline-block">
+								Read more
+							</a>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
+	{#if oralHistory.length > 0}
+		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
+			<h3 class="font-serif text-2xl text-primary text-center">Stories You Were Told</h3>
+			<p class="text-sm text-neutral-content text-center">
+				At age 15, {character.name} met elders who carried living memory of earlier times.
+			</p>
+
+			{#each oralHistory as layer}
+				<div class="bg-base-200 rounded-lg p-5 max-w-[36rem] mx-auto">
+					<p class="text-sm italic text-neutral-content mb-2">{layer.label}</p>
+					<p class="text-base-content">
+						<span class="font-serif font-bold text-primary">{layer.event.year}</span>
+						&mdash; {layer.event.text}
+					</p>
+					{#if layer.event.pageUrl}
+						<a href={layer.event.pageUrl} target="_blank" rel="noopener noreferrer"
+							class="text-xs text-secondary hover:underline mt-2 inline-block">
+							Read more
+						</a>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if events.length > 0}
 		<div class="relative pl-8" aria-label="Historical events timeline">

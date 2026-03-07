@@ -38,5 +38,5 @@
 </div>
 
 {#if hasResults}
-	<Timeline character={form.character} events={form.events} />
+	<Timeline character={form.character} events={form.events} oralHistory={form.oralHistory ?? []} />
 {/if}
