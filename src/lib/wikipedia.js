@@ -204,6 +204,7 @@ function compileLocationPatterns(locationTerms) {
 
 /**
  * Check whether an event is geographically relevant to the location terms.
+ * Only used as a last resort when no country-specific article is available.
  *
  * @param {string} text     The event text to search.
  * @param {string} [pageTitle]  Optional Wikipedia page title for extra matching.
@@ -415,8 +416,8 @@ const TOP_CANDIDATES = 10;
 const ARTICLE_SIZE_CAP = 50_000;
 
 /**
- * Pick the most significant event from a list. Article size is a
- * primary signal (40% of final score), not just a tiebreaker.
+ * Pick the most significant event from a list. Article size is the
+ * dominant signal (50% of final score) — best proxy for recognition.
  *
  * @param {import('./types.js').HistoricalEvent[]} events
  * @returns {Promise<import('./types.js').HistoricalEvent | null>}
@@ -441,8 +442,10 @@ async function pickBestEvent(events) {
 		const sig = event.significance ?? 0;
 		const articleSize = event.pageTitle ? (sizes.get(event.pageTitle) ?? 0) : 0;
 		const sizeScore = Math.min(articleSize / ARTICLE_SIZE_CAP, 1);
-		// Article size is a primary signal, not just a tiebreaker
-		const finalScore = sig * 0.6 + sizeScore * 0.4;
+		// Article size is the dominant signal — best proxy for "have I heard of this?"
+		let finalScore = sig * 0.5 + sizeScore * 0.5;
+		// Events with no linked article are likely obscure
+		if (!event.pageTitle) finalScore *= 0.5;
 		if (finalScore > bestScore) {
 			bestScore = finalScore;
 			best = event;
@@ -716,9 +719,13 @@ async function fetchYearArticleEvents(year, wikiCountry) {
 				return { events, fromCountryArticle: true };
 			}
 		}
+		// When we have a country, don't fall back to generic year articles.
+		// Generic articles contain worldwide events that are mostly irrelevant
+		// and impossible to filter reliably by location keywords.
+		return { events: [], fromCountryArticle: false };
 	}
 
-	// Fall back to generic year article (e.g. "1066")
+	// No country resolved — use generic year article as last resort
 	const yearTitle = String(year);
 	const sectionIdx = await findEventsSection(yearTitle);
 	if (sectionIdx !== null) {
