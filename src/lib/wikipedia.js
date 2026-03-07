@@ -251,6 +251,27 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 
 
 /**
+ * Era-based alternative country names for Wikipedia year articles.
+ * After political unions, Wikipedia uses different article titles.
+ * Keys are base country names from LOCATION_TO_WIKI_COUNTRY.
+ *
+ * @type {Record<string, Array<{from: number, name: string}>>}
+ */
+const COUNTRY_ERA_NAMES = {
+	'England': [
+		{ from: 1707, name: 'Great_Britain' },
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+	'Scotland': [
+		{ from: 1707, name: 'Great_Britain' },
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+	'Ireland': [
+		{ from: 1801, name: 'the_United_Kingdom' },
+	],
+};
+
+/**
  * Resolve the user's location input to a Wikipedia country name
  * for year-article lookups (e.g. "London, England" → "England").
  *
@@ -269,6 +290,28 @@ function resolveWikiCountry(location) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Get the country name(s) to try for a given year, accounting for
+ * political unions (e.g. England → Great Britain after 1707).
+ * Returns the era-specific name first, then the base name as fallback.
+ *
+ * @param {string} baseCountry  The base country from resolveWikiCountry()
+ * @param {number} year
+ * @returns {string[]}
+ */
+function getCountryNamesForYear(baseCountry, year) {
+	const eras = COUNTRY_ERA_NAMES[baseCountry];
+	if (!eras) return [baseCountry];
+
+	// Find the most recent era that applies
+	for (let i = eras.length - 1; i >= 0; i--) {
+		if (year >= eras[i].from) {
+			return [eras[i].name, baseCountry];
+		}
+	}
+	return [baseCountry];
 }
 
 /**
@@ -366,14 +409,17 @@ async function findEventsSection(pageTitle) {
  * @returns {Promise<{events: import('./types.js').HistoricalEvent[], fromCountryArticle: boolean}>}
  */
 async function fetchYearArticleEvents(year, wikiCountry) {
-	// Try country-specific article first (e.g. "1066 in England")
+	// Try country-specific articles (e.g. "1066 in England", "1710 in Great Britain")
 	if (wikiCountry) {
-		const countryTitle = `${year}_in_${wikiCountry}`;
-		const sectionIdx = await findEventsSection(countryTitle);
-		if (sectionIdx !== null) {
-			const events = await fetchParsedSection(countryTitle, sectionIdx, year);
-			if (events.length > 0) {
-				return { events, fromCountryArticle: true };
+		const countryNames = getCountryNamesForYear(wikiCountry, year);
+		for (const country of countryNames) {
+			const countryTitle = `${year}_in_${country}`;
+			const sectionIdx = await findEventsSection(countryTitle);
+			if (sectionIdx !== null) {
+				const events = await fetchParsedSection(countryTitle, sectionIdx, year);
+				if (events.length > 0) {
+					return { events, fromCountryArticle: true };
+				}
 			}
 		}
 	}
