@@ -16,4 +16,11 @@
  * @property {number} [significance]
  */
 
+/**
+ * @typedef {Object} OralHistoryLayer
+ * @property {string} label
+ * @property {number} elderBirthYear
+ * @property {HistoricalEvent} event
+ */
+
 export {};

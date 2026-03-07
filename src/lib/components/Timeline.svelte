@@ -1,6 +1,7 @@
 <script>
 	import EventCard from './EventCard.svelte';
-	let { character, events } = $props();
+	/** @type {{ oralHistory?: import('$lib/types.js').OralHistoryLayer[] }} */
+	let { character, events, oralHistory = [] } = $props();
 
 	const TOP_N = 5;
 
@@ -140,6 +141,31 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if oralHistory.length > 0}
+		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
+			<h3 class="font-serif text-2xl text-primary text-center">Stories You Were Told</h3>
+			<p class="text-sm text-neutral-content text-center">
+				At age 15, {character.name} met elders who carried living memory of earlier times.
+			</p>
+
+			{#each oralHistory as layer}
+				<div class="bg-base-200 rounded-lg p-5 max-w-[36rem] mx-auto">
+					<p class="text-sm italic text-neutral-content mb-2">{layer.label}</p>
+					<p class="text-base-content">
+						<span class="font-serif font-bold text-primary">{layer.event.year}</span>
+						&mdash; {layer.event.text}
+					</p>
+					{#if layer.event.pageUrl}
+						<a href={layer.event.pageUrl} target="_blank" rel="noopener noreferrer"
+							class="text-xs text-secondary hover:underline mt-2 inline-block">
+							Read more
+						</a>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if events.length > 0}
 		<div class="relative pl-8" aria-label="Historical events timeline">

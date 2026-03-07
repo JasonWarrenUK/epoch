@@ -249,6 +249,77 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	return deduped;
 }
 
+/** Age at which the character meets an elder. */
+const MEETING_AGE = 15;
+/** Age of the elder when they meet the character. */
+const ELDER_AGE = 70;
+/** Events from the elder's life are limited to this age. */
+const ELDER_EVENT_MAX_AGE = 30;
+
+/**
+ * Fetch "oral history" events — stories passed down through personal encounters.
+ *
+ * Layer 1: When the character was 15, they met a 70-year-old who lived through
+ *          the most significant event of their youth (under 30).
+ * Layer 2: That elder, at 15, met *their* own 70-year-old, and heard about
+ *          that person's most significant youthful event.
+ *
+ * @param {number} birthYear
+ * @param {string} location
+ * @returns {Promise<import('./types.js').OralHistoryLayer[]>}
+ */
+export async function fetchOralHistory(birthYear, location) {
+	/** @type {import('./types.js').OralHistoryLayer[]} */
+	const layers = [];
+
+	const elderBirthYear = birthYear - (ELDER_AGE - MEETING_AGE);
+	const layer1 = await fetchMostSignificantEvent(
+		elderBirthYear,
+		elderBirthYear + ELDER_EVENT_MAX_AGE - 1,
+		location,
+	);
+	if (!layer1) return layers;
+
+	layers.push({
+		label: 'You met an old person who lived through\u2026',
+		elderBirthYear,
+		event: layer1,
+	});
+
+	const elder2BirthYear = elderBirthYear - (ELDER_AGE - MEETING_AGE);
+	const layer2 = await fetchMostSignificantEvent(
+		elder2BirthYear,
+		elder2BirthYear + ELDER_EVENT_MAX_AGE - 1,
+		location,
+	);
+	if (!layer2) return layers;
+
+	layers.push({
+		label: 'They told you about someone who\u2026',
+		elderBirthYear: elder2BirthYear,
+		event: layer2,
+	});
+
+	return layers;
+}
+
+/**
+ * Fetch events for a year range and return the single most significant one.
+ *
+ * @param {number} fromYear
+ * @param {number} toYear
+ * @param {string} location
+ * @returns {Promise<import('./types.js').HistoricalEvent | null>}
+ */
+async function fetchMostSignificantEvent(fromYear, toYear, location) {
+	if (fromYear < 1) return null;
+
+	const events = await fetchEventsFromYearArticles(fromYear, toYear, location);
+	if (events.length === 0) return null;
+
+	events.sort((a, b) => (b.significance ?? 0) - (a.significance ?? 0));
+	return events[0];
+}
 
 /**
  * Resolve the user's location input to a Wikipedia country name
