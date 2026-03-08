@@ -1,4 +1,5 @@
 import { filterEventText, scoreSignificance, detectCategory } from './event-filters.js';
+import { cacheGet, cacheSet } from './api-cache.js';
 
 const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
 const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/JasonWarrenUK/epoch)';
@@ -914,6 +915,10 @@ function parseYearArticleEvents(html, year) {
  * @returns {Promise<number | null>}
  */
 async function findEventsSection(pageTitle) {
+	const cacheKey = `sections:${pageTitle}`;
+	const cached = cacheGet(cacheKey);
+	if (cached !== undefined) return cached;
+
 	const params = new URLSearchParams({
 		action: 'parse',
 		page: pageTitle,
@@ -925,16 +930,24 @@ async function findEventsSection(pageTitle) {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
-	if (!res.ok) return null;
+	if (!res.ok) {
+		cacheSet(cacheKey, null);
+		return null;
+	}
 
 	const data = await res.json().catch(() => null);
-	if (!data || data.error) return null;
+	if (!data || data.error) {
+		cacheSet(cacheKey, null);
+		return null;
+	}
 
 	const sections = data.parse?.sections || [];
 	const eventsSection = sections.find(
 		(/** @type {{line: string}} */ s) => /^events$/i.test(s.line)
 	);
-	return eventsSection ? Number(eventsSection.index) : null;
+	const result = eventsSection ? Number(eventsSection.index) : null;
+	cacheSet(cacheKey, result);
+	return result;
 }
 
 /**
@@ -1118,6 +1131,10 @@ async function fetchYearArticleEvents(year, wikiCountry) {
  * @returns {Promise<import('./types.js').HistoricalEvent[]>}
  */
 async function fetchParsedSection(pageTitle, sectionIndex, year) {
+	const cacheKey = `parsed:${pageTitle}:${sectionIndex}`;
+	const cached = cacheGet(cacheKey);
+	if (cached !== undefined) return /** @type {import('./types.js').HistoricalEvent[]} */ (cached);
+
 	const params = new URLSearchParams({
 		action: 'parse',
 		page: pageTitle,
@@ -1130,13 +1147,21 @@ async function fetchParsedSection(pageTitle, sectionIndex, year) {
 		headers: { 'User-Agent': USER_AGENT },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
-	if (!res.ok) return [];
+	if (!res.ok) {
+		cacheSet(cacheKey, []);
+		return [];
+	}
 
 	const data = await res.json().catch(() => null);
-	if (!data || data.error) return [];
+	if (!data || data.error) {
+		cacheSet(cacheKey, []);
+		return [];
+	}
 
 	const html = data.parse?.text?.['*'] || '';
-	return parseYearArticleEvents(html, year);
+	const events = parseYearArticleEvents(html, year);
+	cacheSet(cacheKey, events);
+	return events;
 }
 
 /**
@@ -1160,7 +1185,7 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 	for (let y = birthYear; y <= deathYear; y++) years.push(y);
 
 	// Process in batches to respect API rate limits
-	const BATCH_SIZE = 5;
+	const BATCH_SIZE = 10;
 	for (let i = 0; i < years.length; i += BATCH_SIZE) {
 		const batch = years.slice(i, i + BATCH_SIZE);
 		const results = await Promise.allSettled(
@@ -1185,7 +1210,7 @@ async function fetchEventsFromYearArticles(birthYear, deathYear, location) {
 
 		// Delay between batches to avoid rate-limiting
 		if (i + BATCH_SIZE < years.length) {
-			await new Promise(r => setTimeout(r, 500));
+			await new Promise(r => setTimeout(r, 100));
 		}
 	}
 
