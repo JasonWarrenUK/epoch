@@ -1090,13 +1090,15 @@ async function fetchYearArticleEvents(year, wikiCountry) {
 			return { events: countryEvents, fromCountryArticle: true };
 		}
 
-		// When we have a country, don't fall back to generic year articles.
-		// Generic articles contain worldwide events that are mostly irrelevant
-		// and impossible to filter reliably by location keywords.
-		return { events: [], fromCountryArticle: false };
+		// Country-specific article was empty or missing — fall back to
+		// the generic year article. The caller applies location filtering
+		// (eventMatchesLocation) to non-country events, which is imperfect
+		// but better than silently dropping years entirely. Without this
+		// fallback, major events (e.g. the Gunpowder Plot of 1605) are
+		// missed when their country-year article is a stub.
 	}
 
-	// No country resolved — use generic year article as last resort
+	// No country resolved, or country article was empty — use generic year article
 	const yearTitle = String(year);
 	const sectionIdx = await findEventsSection(yearTitle);
 	if (sectionIdx !== null) {
