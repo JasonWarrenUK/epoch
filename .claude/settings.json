@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'echo \"[docs-check] Reminder: after making significant changes, check whether README.md, PLAN.md, or docs/notes.md need updating to stay in sync with the codebase.\"'"
+          }
+        ]
+      }
+    ]
+  }
+}
