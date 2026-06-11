@@ -70,7 +70,7 @@ This is the core UX change — a **two-level collapsible vertical timeline**.
 ```
 
 ### Behavior
-- **Decades** are collapsed by default, showing just the decade label and event count
+- **Decades** are collapsed by default (except the birth decade, which starts expanded), showing just the decade label and event count
 - Clicking a decade expands it to show its **years**
 - **Years** within an expanded decade are also collapsed by default, showing year + event count
 - Clicking a year expands it to show the individual **event cards**
@@ -102,6 +102,7 @@ This is the core UX change — a **two-level collapsible vertical timeline**.
 - White/cream background cards with subtle warm box-shadow
 - Year displayed as a large serif numeral in the margin or top-left
 - Age badge: small, warm-toned pill
+- Category badge: small uppercase pill tinted per event type (conflict, upheaval, political, disaster, cultural)
 - Event text in Source Sans 3, comfortable line-height
 - "Read more" links in olive/secondary, understated
 

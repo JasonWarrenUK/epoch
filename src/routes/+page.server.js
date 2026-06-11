@@ -18,6 +18,10 @@ export const actions = {
 			return fail(400, { error: 'Name, birth year, death year, and location are all required.', ...fields });
 		}
 
+		if (name.length > 100 || location.length > 100) {
+			return fail(400, { error: 'Name and location must be 100 characters or fewer.', ...fields });
+		}
+
 		const birthYear = parseInt(birthYearStr, 10);
 		const deathYear = parseInt(deathYearStr, 10);
 
@@ -44,7 +48,7 @@ export const actions = {
 			return { character, events, oralHistory, lifetimeSummary };
 		} catch (err) {
 			console.error('Wikipedia API error:', err);
-			return fail(500, { error: 'Failed to fetch historical events. Please try again.' });
+			return fail(500, { error: 'Failed to fetch historical events. Please try again.', ...fields });
 		}
 	}
 };

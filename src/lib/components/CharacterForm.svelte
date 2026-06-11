@@ -7,6 +7,22 @@
 	$effect(() => {
 		isCollapsed = collapsed;
 	});
+
+	const LOADING_MESSAGES = [
+		'Consulting the archives…',
+		'Reading the year chronicles…',
+		'Tracing a life through history…',
+	];
+	let messageIndex = $state(0);
+
+	$effect(() => {
+		if (!loading) {
+			messageIndex = 0;
+			return;
+		}
+		const id = setInterval(() => messageIndex = (messageIndex + 1) % LOADING_MESSAGES.length, 4000);
+		return () => clearInterval(id);
+	});
 </script>
 
 {#if isCollapsed}
@@ -23,7 +39,7 @@
 		</div>
 	</button>
 {:else}
-	<form method="POST" action="/" class="bg-white rounded-lg shadow-sm border border-base-300 animate-fade-in" use:enhance={({ cancel, formElement }) => {
+	<form method="POST" action="/" id="character-form" class="bg-white rounded-lg shadow-sm border border-base-300 animate-fade-in" use:enhance={({ cancel, formElement }) => {
 		const birth = Number(formElement.querySelector('[name="birthYear"]')?.value);
 		const death = Number(formElement.querySelector('[name="deathYear"]')?.value);
 		if (birth && death && death <= birth) {
@@ -34,33 +50,33 @@
 		validationError = '';
 		onsubmit?.();
 		return async ({ update }) => {
-			await update();
+			await update({ reset: false });
 			oncomplete?.();
 		};
 	}}>
-		<div class="p-8">
-			<h2 class="font-serif text-primary text-2xl mb-1">Create Your Character</h2>
+		<div class="p-5 sm:p-8">
+			<h2 class="font-serif text-primary text-xl sm:text-2xl mb-1">Create Your Character</h2>
 			<p class="text-sm text-neutral-content mb-8">Give your character a name and a lifetime, and discover the history they would have lived through.</p>
 
-			<div class="grid grid-cols-2 gap-6 mb-6">
-				<div class="col-span-2">
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-6">
+				<div class="sm:col-span-2">
 					<label for="name" class="block text-xs font-semibold tracking-wider uppercase text-neutral-content mb-2">Character Name</label>
-					<input type="text" id="name" name="name" required placeholder="e.g. Eleanor Ashworth" value={form?.name ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
+					<input type="text" id="name" name="name" required maxlength="100" placeholder="e.g. Eleanor Ashworth" value={form?.name ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
 				</div>
 
 				<div>
 					<label for="birthYear" class="block text-xs font-semibold tracking-wider uppercase text-neutral-content mb-2">Born</label>
-					<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" placeholder="e.g. 1820" value={form?.birthYear ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
+					<input type="number" id="birthYear" name="birthYear" required min="1" max="2025" inputmode="numeric" placeholder="e.g. 1820" value={form?.birthYear ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
 				</div>
 
 				<div>
 					<label for="deathYear" class="block text-xs font-semibold tracking-wider uppercase text-neutral-content mb-2">Died</label>
-					<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" placeholder="e.g. 1895" value={form?.deathYear ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
+					<input type="number" id="deathYear" name="deathYear" required min="1" max="2025" inputmode="numeric" placeholder="e.g. 1895" value={form?.deathYear ?? ''} class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
 				</div>
 
-				<div class="col-span-2">
+				<div class="sm:col-span-2">
 					<label for="location" class="block text-xs font-semibold tracking-wider uppercase text-neutral-content mb-2">Location</label>
-					<input type="text" id="location" name="location" required placeholder="e.g. London, England" value={form?.location ?? ''} list="location-suggestions" class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
+					<input type="text" id="location" name="location" required maxlength="100" placeholder="e.g. London, England" value={form?.location ?? ''} list="location-suggestions" class="input w-full bg-base-100 border-base-300 focus:border-primary focus:outline-none" />
 					<datalist id="location-suggestions">
 						<option value="London, England"></option>
 						<option value="Paris, France"></option>
@@ -105,10 +121,10 @@
 				</div>
 			{/if}
 
-			<button type="submit" class="btn btn-primary w-full font-serif text-base tracking-wide" disabled={loading}>
+			<button type="submit" class="btn btn-primary w-full font-serif text-base tracking-wide" disabled={loading} aria-busy={loading}>
 				{#if loading}
 					<span class="loading loading-spinner" aria-hidden="true"></span>
-					Consulting the archives…
+					{LOADING_MESSAGES[messageIndex]}
 				{:else}
 					Chronicle This Life
 				{/if}

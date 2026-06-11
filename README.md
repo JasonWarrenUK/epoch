@@ -11,7 +11,8 @@ Epoch is an interactive historical visualisation tool. Create a fictional charac
 - **Character creation** — name, birth year, death year, and location
 - **Wikipedia integration** — fetches events from year-specific and country-specific Wikipedia articles
 - **Significance ranking** — scores events using Wikidata sitelinks, entity-type detection, named-event prefixes, and link density
-- **Two-level collapsible timeline** — decades collapse to years, years collapse to individual events
+- **Two-level collapsible timeline** — decades collapse to years, years collapse to individual events; the birth decade starts expanded
+- **Category badges** — events are tagged by type (conflict, upheaval, political, disaster, cultural)
 - **Lifetime summary** — top events from childhood, adulthood, and old age
 - **Oral history** — stories the character would have heard from elders at age 15
 - **Content filtering** — strips sports results, malformed markup, citation fragments, and low-quality entries
@@ -28,6 +29,8 @@ This is a working application. The core loop — create a character, fetch event
 - [x] Milestone highlighting (birth year, 18th birthday, death year)
 - [x] Lifetime summary and oral history features
 - [x] Light warm theme (ivory, saddlebrown, olive) with Playfair Display + Source Sans 3
+- [x] Responsive layout for mobile and desktop
+- [x] Error recovery (form input preserved on failure, one-click retry)
 - [x] Test suite for event filtering and scoring
 - [ ] Dedicated backend API (currently using SvelteKit server routes)
 - [ ] Database for persisting characters and sessions

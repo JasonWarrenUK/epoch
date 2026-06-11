@@ -5,7 +5,8 @@
 
 	const TOP_N = 5;
 
-	let expandedDecades = $state(new Set());
+	// Start with the birth decade open so the timeline isn't a wall of collapsed rows
+	let expandedDecades = $state(new Set([Math.floor(character.birthYear / 10) * 10]));
 	let expandedYears = $state(new Set());
 	let showAllDecades = $state(new Set());
 
@@ -129,7 +130,7 @@
 
 <section class="mt-10 animate-fade-in">
 	<div class="text-center mb-10 pb-8 border-b border-base-300">
-		<h2 class="font-serif text-4xl text-primary mb-2">{character.name}</h2>
+		<h2 class="font-serif text-3xl sm:text-4xl text-primary mb-2">{character.name}</h2>
 		<p class="text-neutral-content text-lg">
 			{character.birthYear} &ndash; {character.deathYear}
 			&middot; {character.location}
@@ -140,16 +141,17 @@
 				<button type="button" class="text-xs text-secondary hover:underline cursor-pointer" onclick={expandAll}>Expand all</button>
 				<button type="button" class="text-xs text-secondary hover:underline cursor-pointer" onclick={collapseAll}>Collapse all</button>
 			</div>
+			<span class="sr-only" role="status">{expandedDecades.size} of {decades.length} decades expanded</span>
 		{/if}
 	</div>
 
 	{#if lifetimeSummary.length > 0}
 		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
-			<h3 class="font-serif text-2xl text-primary text-center">{character.name} lived through&hellip;</h3>
+			<h3 class="font-serif text-xl sm:text-2xl text-primary text-center">{character.name} lived through&hellip;</h3>
 
 			<div class="grid gap-4 max-w-[36rem] mx-auto">
 				{#each lifetimeSummary as phase}
-					<div class="bg-base-200 rounded-lg p-5">
+					<div class="bg-base-200 rounded-lg p-4 sm:p-5">
 						<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content mb-1">{phase.label}</p>
 						<p class="text-base-content">
 							<span class="font-serif font-bold text-primary">{phase.event.year}</span>
@@ -170,13 +172,13 @@
 
 	{#if oralHistory.length > 0}
 		<div class="mb-10 pb-8 border-b border-base-300 space-y-6">
-			<h3 class="font-serif text-2xl text-primary text-center">Stories You Were Told</h3>
+			<h3 class="font-serif text-xl sm:text-2xl text-primary text-center">Stories You Were Told</h3>
 			<p class="text-sm text-neutral-content text-center">
 				At age 15, {character.name} met elders who carried living memory of earlier times.
 			</p>
 
 			{#each oralHistory as layer}
-				<div class="bg-base-200 rounded-lg p-5 max-w-[36rem] mx-auto">
+				<div class="bg-base-200 rounded-lg p-4 sm:p-5 max-w-[36rem] mx-auto">
 					<p class="text-sm italic text-neutral-content mb-2">{layer.label}</p>
 					<p class="text-base-content">
 						<span class="font-serif font-bold text-primary">{layer.event.year}</span>
@@ -194,23 +196,23 @@
 	{/if}
 
 	{#if events.length > 0}
-		<div class="relative pl-8" aria-label="Historical events timeline">
+		<div class="relative pl-5 sm:pl-8" aria-label="Historical events timeline">
 			<!-- Vertical connecting line -->
-			<div class="absolute left-3 top-0 bottom-0 w-px border-l-2 border-dashed border-neutral"></div>
+			<div class="absolute left-1.5 sm:left-3 top-0 bottom-0 w-px border-l-2 border-dashed border-neutral"></div>
 
 			{#each decades as { decade, topYears, restYears, topCount, restCount, eventCount, ageRange }, di}
 				<div class="relative mb-6">
 					<!-- Decade dot -->
-					<div class="absolute -left-5 top-1 w-4 h-4 rounded-full bg-primary shadow-sm"></div>
+					<div class="absolute -left-3.5 sm:-left-5 top-1 w-3 h-3 sm:w-4 sm:h-4 rounded-full bg-primary shadow-sm"></div>
 
 					<!-- Decade header -->
 					<button
 						type="button"
-						class="w-full flex items-center gap-4 cursor-pointer group"
+						class="w-full flex flex-wrap items-center gap-x-3 gap-y-1 sm:gap-4 cursor-pointer group"
 						onclick={() => toggleDecade(decade)}
 						aria-expanded={expandedDecades.has(decade)}
 					>
-						<h3 class="font-serif text-2xl text-primary">{decade}s</h3>
+						<h3 class="font-serif text-xl sm:text-2xl text-primary">{decade}s</h3>
 						<div class="flex-1 h-px bg-base-300"></div>
 						<span class="text-xs text-neutral-content">
 							{ageRange} &middot;
@@ -232,8 +234,8 @@
 					<!-- Years within decade -->
 					{#if expandedDecades.has(decade)}
 						<!-- Decade top events summary -->
-						<div class="mt-4 ml-4 mb-4 bg-base-200 rounded-lg p-4 space-y-2">
-							<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content">Top events this decade</p>
+						<div class="mt-4 ml-2 sm:ml-4 mb-4 bg-base-200 rounded-lg p-4 space-y-2">
+							<p class="text-xs font-semibold uppercase tracking-wide text-neutral-content">{restCount > 0 ? 'Top events this decade' : 'Events this decade'}</p>
 							{#each topYears as { year, events: yearEvents }}
 								{#each yearEvents as event}
 									<div class="text-sm text-base-content">
@@ -249,12 +251,12 @@
 							{/each}
 						</div>
 
-						<div class="mt-4 ml-4 space-y-4 animate-collapse-open">
+						<div class="mt-4 ml-2 sm:ml-4 space-y-4 animate-collapse-open">
 							{#snippet yearList(years)}
 								{#each years as { year, events: yearEvents }}
 									<div class="relative">
 										<!-- Year dot -->
-										<div class="absolute -left-7 top-1.5 w-2.5 h-2.5 rounded-full {isSpecialYear(year) ? 'bg-accent ring-2 ring-accent/30' : 'bg-neutral'}"></div>
+										<div class="absolute -left-5 sm:-left-7 top-1.5 w-2.5 h-2.5 rounded-full {isSpecialYear(year) ? 'bg-accent ring-2 ring-accent/30' : 'bg-neutral'}"></div>
 
 										<!-- Year header -->
 										<button
@@ -283,7 +285,7 @@
 
 										<!-- Events within year -->
 										{#if expandedYears.has(year)}
-											<div class="mt-3 ml-6 space-y-3 animate-collapse-open">
+											<div class="mt-3 ml-3 sm:ml-6 space-y-3 animate-collapse-open">
 												{#each yearEvents as event}
 													<EventCard {event} />
 												{/each}

@@ -14,7 +14,7 @@
 
 {#if !hasResults}
 	<section class="max-w-[40rem] mx-auto text-center mb-12 animate-fade-in">
-		<p class="font-serif text-xl text-neutral-content leading-relaxed">
+		<p class="font-serif text-lg sm:text-xl text-neutral-content leading-relaxed">
 			Pick a time and place, and see what history looked like from there.
 		</p>
 	</section>
@@ -23,6 +23,14 @@
 {#if form?.error}
 	<div role="alert" class="alert alert-error mb-6 max-w-[40rem] mx-auto">
 		<span>{form.error}</span>
+		<button
+			type="button"
+			class="btn btn-sm"
+			disabled={loading}
+			onclick={() => document.getElementById('character-form')?.requestSubmit()}
+		>
+			Try again
+		</button>
 	</div>
 {/if}
 
@@ -37,5 +45,7 @@
 </div>
 
 {#if hasResults}
-	<Timeline character={form.character} events={form.events} oralHistory={form.oralHistory ?? []} lifetimeSummary={form.lifetimeSummary ?? []} />
+	{#key form.character}
+		<Timeline character={form.character} events={form.events} oralHistory={form.oralHistory ?? []} lifetimeSummary={form.lifetimeSummary ?? []} />
+	{/key}
 {/if}
