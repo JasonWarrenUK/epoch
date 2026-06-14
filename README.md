@@ -43,6 +43,7 @@ This is a working application. The core loop — create a character, fetch event
 - **Data**: [Wikipedia MediaWiki API](https://www.mediawiki.org/wiki/API:Main_page), [Wikidata API](https://www.wikidata.org/wiki/Wikidata:Data_access)
 - **Testing**: [Vitest](https://vitest.dev/)
 - **Build**: [Vite 6](https://vite.dev/)
+- **Deployment**: [Vercel](https://vercel.com/) via [`@sveltejs/adapter-vercel`](https://svelte.dev/docs/kit/adapter-vercel)
 
 ## Development
 
@@ -52,6 +53,13 @@ npm run dev      # start dev server
 npm run test     # run test suite
 npm run build    # production build
 ```
+
+## Deployment
+
+The app deploys to Vercel using `@sveltejs/adapter-vercel`. Vercel
+auto-detects SvelteKit, so connecting the repository and deploying is enough —
+no extra configuration is required. The server-side form action runs as a
+Vercel serverless function.
 
 ## License
 

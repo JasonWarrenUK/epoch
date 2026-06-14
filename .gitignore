@@ -9,6 +9,9 @@ lerna-debug.log*
 .svelte-kit/
 build/
 
+# Vercel
+.vercel/
+
 # macOS
 .DS_Store
 .AppleDouble
