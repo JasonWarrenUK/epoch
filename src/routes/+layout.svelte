@@ -4,13 +4,13 @@
 </script>
 
 <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-primary focus:text-primary-content">Skip to content</a>
-<header class="py-10 text-center border-b border-base-300">
+<header class="py-6 sm:py-10 text-center border-b border-base-300">
 	<a href="/" class="no-underline">
-		<h1 class="text-4xl font-serif text-primary tracking-widest">Epoch</h1>
+		<h1 class="text-3xl sm:text-4xl font-serif text-primary tracking-widest">Epoch</h1>
 	</a>
 </header>
 
-<main id="main-content" class="max-w-[60rem] mx-auto px-6 py-12 min-h-[calc(100vh-14rem)]">
+<main id="main-content" class="max-w-[60rem] mx-auto px-4 py-8 sm:px-6 sm:py-12 min-h-[calc(100vh-14rem)]">
 	{@render children()}
 </main>
 
