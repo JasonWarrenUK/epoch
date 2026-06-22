@@ -6,6 +6,8 @@
  * `filterEventText` is the single entry-point that cleans then filters.
  */
 
+import { SIG_CONFIG } from './significance-config.js';
+
 // ── Cleaning (transforms, does not reject) ───────────────────────
 
 const CITATION_RE = /\[\d+\]|\[citation needed\]|\[note \d+\]|\[[a-z]\]/gi;
@@ -164,8 +166,12 @@ const KEYWORD_WEIGHTS = [
 	[/\b(alliance|elected|annexed|proclaimed|abolished|surrendered|executed|crowned|signed|ratified)\b/i, 0.25, 'political'],
 ];
 
-/** Default link cap when no dynamic cap is provided. */
-const DEFAULT_MAX_LINKS = 10;
+/**
+ * Default link cap. A fixed global value (not a per-article dynamic cap) so
+ * that an event with N links scores the same regardless of how link-dense the
+ * year-article it came from happens to be.
+ */
+const DEFAULT_MAX_LINKS = SIG_CONFIG.GLOBAL_MAX_LINKS;
 
 /**
  * Detect the dominant keyword category for an event.
@@ -248,4 +254,41 @@ export function scoreSignificance(text, linkCount, opts = {}) {
 	if (isChild) score *= 0.8;
 
 	return score;
+}
+
+// ── Popularity (pageviews) scoring ───────────────────────────────
+
+/**
+ * Convert average monthly pageviews into a 0–1 popularity score.
+ *
+ * Pageviews are heavily right-skewed (a famous event gets orders of magnitude
+ * more views than an obscure one), so a linear scale would collapse almost
+ * everything to ~0. We log-normalize against a saturation point, following the
+ * approach used by MIT's Pantheon (Historical Popularity Index) and Skiena &
+ * Ward's "Who's Bigger?".
+ *
+ * @param {number} avgViews   Average monthly pageviews (>= 0).
+ * @param {number} [saturation]  Views at which the score saturates to ~1.
+ * @returns {number}          Score between 0 and 1.
+ */
+export function popScore(avgViews, saturation = SIG_CONFIG.POP_SATURATION) {
+	if (!(avgViews > 0)) return 0;
+	const score = Math.log(1 + avgViews) / Math.log(1 + saturation);
+	return Math.max(0, Math.min(score, 1));
+}
+
+/**
+ * Blend text significance with a popularity score for the main timeline ranking.
+ *
+ * Degrades gracefully: when `pop` is null/undefined (no pageview data — e.g. the
+ * event has no linked article or the API call failed), the original text
+ * significance is returned unchanged so ranking still works offline.
+ *
+ * @param {number} textSig   Text-heuristic significance (0–1).
+ * @param {number | null | undefined} pop  Popularity score (0–1), or null.
+ * @returns {number}         Blended significance.
+ */
+export function blendPopularity(textSig, pop) {
+	if (pop == null) return textSig;
+	return textSig * SIG_CONFIG.W_TEXT + pop * SIG_CONFIG.W_POP;
 }
