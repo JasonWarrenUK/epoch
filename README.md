@@ -10,7 +10,7 @@ Epoch is an interactive historical visualisation tool. Create a fictional charac
 
 - **Character creation** — name, birth year, death year, and location
 - **Wikipedia integration** — fetches events from year-specific and country-specific Wikipedia articles
-- **Significance ranking** — scores events using Wikidata sitelinks, entity-type detection, named-event prefixes, and link density
+- **Significance ranking** — blends reader attention (Wikipedia pageviews, log-normalized), Wikidata sitelink breadth, editor-curated "On this day" anniversaries, named-event prefixes, and link density, with bias guards inspired by MIT's Pantheon and Skiena & Ward's "Who's Bigger?"
 - **Two-level collapsible timeline** — decades collapse to years, years collapse to individual events; the birth decade starts expanded
 - **Category badges** — events are tagged by type (conflict, upheaval, political, disaster, cultural)
 - **Lifetime summary** — top events from childhood, adulthood, and old age
@@ -40,7 +40,7 @@ This is a working application. The core loop — create a character, fetch event
 
 - **Framework**: [SvelteKit 2](https://svelte.dev/) with [Svelte 5](https://svelte.dev/)
 - **Styling**: [Tailwind CSS 4](https://tailwindcss.com/) + [DaisyUI 5](https://daisyui.com/)
-- **Data**: [Wikipedia MediaWiki API](https://www.mediawiki.org/wiki/API:Main_page), [Wikidata API](https://www.wikidata.org/wiki/Wikidata:Data_access)
+- **Data**: [Wikipedia MediaWiki API](https://www.mediawiki.org/wiki/API:Main_page), [Wikidata API](https://www.wikidata.org/wiki/Wikidata:Data_access), [Wikimedia Pageviews REST API](https://wikimedia.org/api/rest_v1/), [Wikimedia "On this day" Feed API](https://api.wikimedia.org/wiki/Feed_API/Reference/On_this_day)
 - **Testing**: [Vitest](https://vitest.dev/)
 - **Build**: [Vite 6](https://vite.dev/)
 - **Deployment**: [Vercel](https://vercel.com/) via [`@sveltejs/adapter-vercel`](https://svelte.dev/docs/kit/adapter-vercel)
