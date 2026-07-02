@@ -1,5 +1,15 @@
-import { filterEventText, scoreSignificance, detectCategory } from './event-filters.js';
+import { filterEventText, scoreSignificance, detectCategory, popScore, blendPopularity } from './event-filters.js';
 import { cacheGet, cacheSet } from './api-cache.js';
+import { SIG_CONFIG } from './significance-config.js';
+
+const WIKIMEDIA_REST_URL = 'https://wikimedia.org/api/rest_v1';
+const WIKIMEDIA_FEED_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en';
+
+/** Month name → two-digit number, for parsing date prefixes in event text. */
+const MONTH_NUMBERS = {
+	january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
+	july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
+};
 
 const MEDIAWIKI_API_URL = 'https://en.wikipedia.org/w/api.php';
 const USER_AGENT = 'GrandChronicle/0.1 (educational project; https://github.com/JasonWarrenUK/epoch)';
@@ -221,6 +231,245 @@ function eventMatchesLocation(text, pageTitle, locationPatterns) {
 	return false;
 }
 
+// ── Popularity & curated-significance enrichment ─────────────────
+
+/** Normalize a Wikipedia title for cross-source matching (underscores → spaces, lowercased). */
+function normalizeTitle(title) {
+	return title.replace(/_/g, ' ').trim().toLowerCase();
+}
+
+const DATE_PREFIX_MD_RE = /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b/i;
+
+/**
+ * Extract a {mm, dd} calendar date from an event's leading date prefix.
+ * @param {string} text
+ * @returns {{ mm: string, dd: string } | null}
+ */
+function extractMonthDay(text) {
+	const m = text.match(DATE_PREFIX_MD_RE);
+	if (!m) return null;
+	const mm = /** @type {Record<string,string>} */ (MONTH_NUMBERS)[m[1].toLowerCase()];
+	if (!mm) return null;
+	const day = parseInt(m[2], 10);
+	if (day < 1 || day > 31) return null;
+	return { mm, dd: String(day).padStart(2, '0') };
+}
+
+/**
+ * Compute the trailing pageview window as YYYYMMDD strings.
+ * @param {Date} [now]
+ * @returns {{ start: string, end: string }}
+ */
+function pageviewWindow(now = new Date()) {
+	const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+	const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - SIG_CONFIG.PAGEVIEW_MONTHS, 1));
+	const fmt = (/** @type {Date} */ d) =>
+		`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}01`;
+	return { start: fmt(start), end: fmt(end) };
+}
+
+/**
+ * Summarize a monthly pageview series into mean and coefficient of variation.
+ * @param {number[]} views
+ * @returns {{ avgViews: number, cv: number }}
+ */
+function summarizeViews(views) {
+	const n = views.length;
+	if (n === 0) return { avgViews: 0, cv: 0 };
+	const mean = views.reduce((a, b) => a + b, 0) / n;
+	if (mean <= 0) return { avgViews: 0, cv: 0 };
+	const variance = views.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+	return { avgViews: mean, cv: Math.sqrt(variance) / mean };
+}
+
+/**
+ * Fetch average monthly pageviews + coefficient of variation for one title.
+ * Cached (`pageviews:{title}`, negative results cached too). Returns null on
+ * any failure so callers keep text-only scoring.
+ *
+ * @param {string} title
+ * @param {string} start
+ * @param {string} end
+ * @returns {Promise<{ avgViews: number, cv: number } | null>}
+ */
+async function fetchPageviewsForTitle(title, start, end) {
+	const cacheKey = `pageviews:${title}`;
+	const cached = cacheGet(cacheKey);
+	if (cached !== undefined) return cached;
+
+	const encoded = encodeURIComponent(title.replace(/ /g, '_'));
+	const url = `${WIKIMEDIA_REST_URL}/metrics/pageviews/per-article/${SIG_CONFIG.PAGEVIEW_PROJECT}/all-access/all-agents/${encoded}/monthly/${start}/${end}`;
+	try {
+		const res = await fetchWithRetry(url, {
+			headers: { 'User-Agent': USER_AGENT },
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+		if (!res.ok) { cacheSet(cacheKey, null); return null; }
+		const data = await res.json().catch(() => null);
+		const items = data?.items;
+		if (!Array.isArray(items) || items.length === 0) { cacheSet(cacheKey, null); return null; }
+		const stats = summarizeViews(items.map((/** @type {any} */ it) => it.views ?? 0));
+		cacheSet(cacheKey, stats);
+		return stats;
+	} catch {
+		cacheSet(cacheKey, null);
+		return null;
+	}
+}
+
+/**
+ * Batch-fetch pageview stats for a set of titles (deduped, concurrency-bounded).
+ * @param {string[]} titles
+ * @returns {Promise<Map<string, { avgViews: number, cv: number }>>}
+ */
+async function fetchPageviews(titles) {
+	/** @type {Map<string, { avgViews: number, cv: number }>} */
+	const out = new Map();
+	const unique = [...new Set(titles)];
+	if (unique.length === 0) return out;
+
+	const { start, end } = pageviewWindow();
+	const BATCH_SIZE = 10;
+	for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+		const batch = unique.slice(i, i + BATCH_SIZE);
+		const results = await Promise.allSettled(batch.map(t => fetchPageviewsForTitle(t, start, end)));
+		for (let j = 0; j < batch.length; j++) {
+			const r = results[j];
+			if (r.status === 'fulfilled' && r.value) out.set(batch[j], r.value);
+		}
+		if (i + BATCH_SIZE < unique.length) await new Promise(r => setTimeout(r, 100));
+	}
+	return out;
+}
+
+/**
+ * Fetch Wikipedia's curated "On this day" events for a calendar date.
+ * Returns a Set of `${year}:${normalizedTitle}` keys. Cached per date
+ * (`onthisday:{MM}:{DD}`, including empty results); empty Set on any failure.
+ *
+ * @param {string} mm
+ * @param {string} dd
+ * @returns {Promise<Set<string>>}
+ */
+async function fetchOnThisDay(mm, dd) {
+	const cacheKey = `onthisday:${mm}:${dd}`;
+	const cached = cacheGet(cacheKey);
+	if (cached !== undefined) return new Set(cached);
+
+	const url = `${WIKIMEDIA_FEED_URL}/onthisday/events/${mm}/${dd}`;
+	try {
+		const res = await fetchWithRetry(url, {
+			headers: { 'User-Agent': USER_AGENT },
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+		if (!res.ok) { cacheSet(cacheKey, []); return new Set(); }
+		const data = await res.json().catch(() => null);
+		const events = data?.events;
+		/** @type {string[]} */
+		const keys = [];
+		if (Array.isArray(events)) {
+			for (const ev of events) {
+				if (typeof ev.year !== 'number') continue;
+				for (const page of ev.pages ?? []) {
+					const title = page?.titles?.normalized ?? page?.title;
+					if (title) keys.push(`${ev.year}:${normalizeTitle(title)}`);
+				}
+			}
+		}
+		cacheSet(cacheKey, keys);
+		return new Set(keys);
+	} catch {
+		cacheSet(cacheKey, []);
+		return new Set();
+	}
+}
+
+/**
+ * Enrich event significance with reader-attention (pageviews) and curated
+ * "On this day" signals — the strongest proxies for human-perceived
+ * significance. Mutates `event.significance` in place for the top candidates
+ * per decade (bounded API budget). Degrades to text-only scoring on any
+ * missing data, so the timeline still ranks offline.
+ *
+ * @param {import('./types.js').HistoricalEvent[]} events
+ * @param {number} [currentYear]
+ * @returns {Promise<void>}
+ */
+export async function enrichSignificance(events, currentYear = new Date().getUTCFullYear()) {
+	// Bounded candidate set: top N per decade among events with a linked article.
+	/** @type {Map<number, import('./types.js').HistoricalEvent[]>} */
+	const byDecade = new Map();
+	for (const e of events) {
+		if (!e.pageTitle) continue;
+		const decade = Math.floor(e.year / 10);
+		const list = byDecade.get(decade) ?? [];
+		list.push(e);
+		byDecade.set(decade, list);
+	}
+	/** @type {import('./types.js').HistoricalEvent[]} */
+	const candidates = [];
+	for (const list of byDecade.values()) {
+		list.sort((a, b) => (b.textSignificance ?? b.significance ?? 0) - (a.textSignificance ?? a.significance ?? 0));
+		candidates.push(...list.slice(0, SIG_CONFIG.TOP_PER_DECADE));
+	}
+	if (candidates.length === 0) return;
+
+	const pageviews = await fetchPageviews(
+		candidates.map(e => /** @type {string} */ (e.pageTitle))
+	);
+
+	// Distinct calendar dates among candidates → curated "On this day" sets.
+	/** @type {Map<string, { mm: string, dd: string }>} */
+	const dateMap = new Map();
+	for (const e of candidates) {
+		const md = extractMonthDay(e.text);
+		if (md) dateMap.set(`${md.mm}/${md.dd}`, md);
+	}
+	/** @type {Map<string, Set<string>>} */
+	const curatedByDate = new Map();
+	const dates = [...dateMap.values()];
+	const BATCH_SIZE = 10;
+	for (let i = 0; i < dates.length; i += BATCH_SIZE) {
+		const batch = dates.slice(i, i + BATCH_SIZE);
+		const sets = await Promise.allSettled(batch.map(d => fetchOnThisDay(d.mm, d.dd)));
+		for (let j = 0; j < batch.length; j++) {
+			const r = sets[j];
+			curatedByDate.set(`${batch[j].mm}/${batch[j].dd}`, r.status === 'fulfilled' ? r.value : new Set());
+		}
+		if (i + BATCH_SIZE < dates.length) await new Promise(r => setTimeout(r, 100));
+	}
+
+	for (const e of candidates) {
+		const textSig = e.textSignificance ?? e.significance ?? 0;
+		const stats = e.pageTitle ? pageviews.get(e.pageTitle) : undefined;
+
+		/** @type {number | null} */
+		let pop = null;
+		if (stats) {
+			pop = popScore(stats.avgViews);
+			// Discount flash-in-the-pan popularity (a single viral month).
+			if (stats.cv > SIG_CONFIG.CV_DAMP_THRESHOLD) pop *= SIG_CONFIG.CV_DAMP;
+			// Recency guard — current attention to very recent events is inflated.
+			if (currentYear - e.year < SIG_CONFIG.RECENCY_WINDOW) pop *= SIG_CONFIG.RECENCY_DAMP;
+		}
+
+		let sig = blendPopularity(textSig, pop);
+		// Re-apply structural boosts captured during fetch (e.g. global notability).
+		sig *= e.boost ?? 1;
+
+		// Curated "On this day" match → editorial ground-truth boost.
+		const md = extractMonthDay(e.text);
+		if (md && e.pageTitle) {
+			const set = curatedByDate.get(`${md.mm}/${md.dd}`);
+			if (set && set.has(`${e.year}:${normalizeTitle(e.pageTitle)}`)) {
+				sig *= SIG_CONFIG.CURATED_BOOST;
+			}
+		}
+
+		e.significance = sig;
+	}
+}
+
 /**
  * Fetch historical events from Wikipedia year articles for a character's
  * lifetime, filtered by location and scored by significance.
@@ -247,6 +496,11 @@ export async function fetchEventsForLifetime(birthYear, deathYear, location) {
 	}
 
 	const deduped = [...seen.values()];
+
+	// Blend in reader-attention (pageviews) and curated "On this day" signals
+	// so ranking reflects human-perceived significance, not just text heuristics.
+	await enrichSignificance(deduped);
+
 	deduped.sort((a, b) => a.year - b.year);
 	return deduped;
 }
@@ -536,8 +790,8 @@ async function fetchArticleSizes(titles) {
 /** Number of top candidates to consider for Wikidata-based ranking. */
 const TOP_CANDIDATES = 10;
 
-/** Sitelink count that saturates the sitelink score. */
-const SITELINK_CAP = 80;
+/** Sitelink count that saturates the (log-normalized) sitelink score. */
+const SITELINK_CAP = SIG_CONFIG.SITELINK_CAP;
 
 /**
  * Entity-type multiplier — adjusts sitelink score based on whether the
@@ -552,12 +806,7 @@ const SITELINK_CAP = 80;
  * @returns {number}
  */
 function entityTypeMultiplier(entityType) {
-	switch (entityType) {
-		case 'event': return 1.0;
-		case 'person': return 0.3;
-		case 'place': return 0.2;
-		default: return 0.5;
-	}
+	return SIG_CONFIG.ENTITY_MULT[entityType] ?? SIG_CONFIG.ENTITY_MULT.other;
 }
 
 /**
@@ -600,8 +849,10 @@ async function pickBestEvent(events) {
 		if (useWikidata && event.pageTitle) {
 			const wd = wikidataInfo.get(event.pageTitle);
 			if (wd) {
-				const rawSitelinkScore = Math.min(wd.sitelinks / SITELINK_CAP, 1);
-				externalScore = rawSitelinkScore * entityTypeMultiplier(wd.entityType);
+				// Log-normalize sitelinks — language-edition counts are skewed
+				// like pageviews, so a linear cap over-rewards the long tail.
+				const rawSitelinkScore = Math.log(1 + wd.sitelinks) / Math.log(1 + SITELINK_CAP);
+				externalScore = Math.min(rawSitelinkScore, 1) * entityTypeMultiplier(wd.entityType);
 			}
 		} else if (!useWikidata && event.pageTitle) {
 			// Fallback: article byte size (original approach)
@@ -609,11 +860,13 @@ async function pickBestEvent(events) {
 			externalScore = Math.min(articleSize / 50_000, 1);
 		}
 
-		// Wikidata/external signal is dominant (60%), text heuristics secondary (40%)
-		let finalScore = sig * 0.4 + externalScore * 0.6;
+		// `sig` already carries the pageviews blend (Tier 1). Sitelinks remain a
+		// distinct breadth axis (languages != views), so combine the two rather
+		// than collapsing them.
+		let finalScore = sig * SIG_CONFIG.W_PICK_TEXT + externalScore * SIG_CONFIG.W_PICK_SITELINK;
 
 		// Events with no linked article are likely obscure
-		if (!event.pageTitle) finalScore *= 0.5;
+		if (!event.pageTitle) finalScore *= SIG_CONFIG.NO_PAGE_PENALTY;
 
 		if (finalScore > bestScore) {
 			bestScore = finalScore;
@@ -894,16 +1147,17 @@ function parseYearArticleEvents(html, year) {
 		raw.push({ text: cleanedText, pageTitle, pageUrl, linkCount, isParent: false, isChild: false, childCount: 0 });
 	}
 
-	// Dynamic cap: normalise link counts relative to the most-linked event
-	const maxLinks = raw.length > 0
-		? Math.max(...raw.map(e => e.linkCount))
-		: 1;
-
+	// Fixed global link cap (SIG_CONFIG.GLOBAL_MAX_LINKS) — scoreSignificance
+	// applies it by default. A per-article dynamic cap used to make identical
+	// events score differently depending on their source article's link density.
 	return raw.map(({ text, pageTitle, pageUrl, linkCount, isParent, isChild, childCount }) => {
-		const significance = scoreSignificance(text, linkCount, { maxLinks, isParent, isChild, childCount });
+		const textSignificance = scoreSignificance(text, linkCount, { isParent, isChild, childCount });
 		const category = detectCategory(text) ?? undefined;
+		// `significance` starts equal to the text score; the popularity
+		// enrichment pass and boosts refine it later. `textSignificance` and
+		// `boost` are retained so enrichment can re-blend without losing boosts.
 		return /** @type {import('./types.js').HistoricalEvent} */ (
-			{ year, text, pageTitle, pageUrl, significance, isParent, isChild, category }
+			{ year, text, pageTitle, pageUrl, significance: textSignificance, textSignificance, boost: 1, isParent, isChild, category }
 		);
 	});
 }
@@ -1006,8 +1260,15 @@ async function boostGloballyNotableEvents(countryEvents, year) {
 			}
 		}
 
-		if (isGlobal && event.significance !== undefined) {
-			event.significance *= 1.5;
+		if (isGlobal && event.significance !== undefined && !event.isGlobalNotable) {
+			// Record the boost as a factor so the popularity-enrichment pass can
+			// re-blend the text/popularity base and re-apply it (rather than
+			// silently overwriting this multiplied value). The `isGlobalNotable`
+			// guard keeps this idempotent — parsed events are cached by reference,
+			// so without it a repeated request would compound the boost.
+			event.isGlobalNotable = true;
+			event.boost = (event.boost ?? 1) * SIG_CONFIG.GLOBAL_NOTABLE_BOOST;
+			event.significance *= SIG_CONFIG.GLOBAL_NOTABLE_BOOST;
 		}
 	}
 }

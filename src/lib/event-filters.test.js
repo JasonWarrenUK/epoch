@@ -12,7 +12,10 @@ import {
 	scoreSignificance,
 	hasNamedEventPrefix,
 	detectCategory,
+	popScore,
+	blendPopularity,
 } from './event-filters.js';
+import { SIG_CONFIG } from './significance-config.js';
 
 // ── cleanCitations ───────────────────────────────────────────────
 
@@ -370,5 +373,79 @@ describe('filterEventText', () => {
 	it('passes events with a date prefix and sufficient content', () => {
 		const text = 'January 15 – The king signs the peace treaty in Westminster';
 		expect(filterEventText(text)).toBe(text);
+	});
+});
+
+// ── scoreSignificance: fixed (non-dynamic) link cap ──────────────
+
+describe('scoreSignificance fixed link cap', () => {
+	it('scores identical link counts identically regardless of article context', () => {
+		// With a fixed global cap, an event with N links scores the same no
+		// matter how link-dense its source year-article was. This locks in the
+		// cross-article-bias fix (the old per-article dynamic cap is gone).
+		const text = 'A significant treaty is signed between the two kingdoms';
+		const a = scoreSignificance(text, 5);
+		const b = scoreSignificance(text, 5);
+		expect(a).toBe(b);
+	});
+
+	it('defaults maxLinks to the global config cap', () => {
+		const text = 'Some event text for testing the cap value here';
+		const atCap = scoreSignificance(text, SIG_CONFIG.GLOBAL_MAX_LINKS);
+		const aboveCap = scoreSignificance(text, SIG_CONFIG.GLOBAL_MAX_LINKS + 50);
+		expect(atCap).toBeCloseTo(aboveCap, 5);
+	});
+});
+
+// ── popScore ─────────────────────────────────────────────────────
+
+describe('popScore', () => {
+	it('returns 0 for zero or negative views', () => {
+		expect(popScore(0)).toBe(0);
+		expect(popScore(-100)).toBe(0);
+	});
+
+	it('increases monotonically with views', () => {
+		expect(popScore(1000)).toBeGreaterThan(popScore(100));
+		expect(popScore(100)).toBeGreaterThan(popScore(10));
+	});
+
+	it('is concave (log-shaped) — diminishing returns at the top', () => {
+		// A 10x jump at the low end adds more than a 10x jump near saturation.
+		const lowGain = popScore(1000) - popScore(100);
+		const highGain = popScore(100_000) - popScore(10_000);
+		expect(lowGain).toBeGreaterThan(highGain);
+	});
+
+	it('saturates to ~1 at the configured saturation point', () => {
+		const atSat = popScore(SIG_CONFIG.POP_SATURATION);
+		expect(atSat).toBeGreaterThan(0.99);
+		expect(atSat).toBeLessThanOrEqual(1);
+	});
+
+	it('clamps to a maximum of 1 beyond saturation', () => {
+		expect(popScore(SIG_CONFIG.POP_SATURATION * 100)).toBe(1);
+	});
+});
+
+// ── blendPopularity ──────────────────────────────────────────────
+
+describe('blendPopularity', () => {
+	it('returns text significance unchanged when popularity is null (degradation)', () => {
+		expect(blendPopularity(0.42, null)).toBe(0.42);
+		expect(blendPopularity(0.42, undefined)).toBe(0.42);
+	});
+
+	it('blends text and popularity by the configured weights', () => {
+		const blended = blendPopularity(0.4, 0.8);
+		expect(blended).toBeCloseTo(0.4 * SIG_CONFIG.W_TEXT + 0.8 * SIG_CONFIG.W_POP, 6);
+	});
+
+	it('lets a popular low-text event outrank an unpopular high-text event', () => {
+		// The core human-perception win: pageviews can promote a famous event
+		// that scored modestly on text heuristics above a verbose obscure one.
+		const popularButPlain = blendPopularity(0.3, 0.95);
+		const obscureButWordy = blendPopularity(0.6, 0.05);
+		expect(popularButPlain).toBeGreaterThan(obscureButWordy);
 	});
 });
