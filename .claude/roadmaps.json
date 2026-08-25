@@ -1,0 +1,49 @@
+[
+	{
+		"name": "PHASE_1",
+		"path": "docs/roadmaps/PHASE_1.md",
+		"archived": false,
+		"externalGates": [],
+		"milestones": [
+			{
+				"id": "M1",
+				"name": "Backend Foundation",
+				"goal": "Decide on a data store and stand up a dedicated backend API to replace SvelteKit-only server routes.",
+				"tasks": [
+					{ "id": "BE.1", "description": "Decide data store: PostgreSQL/Supabase (relational, RLS) vs Neo4j (graph) vs other, based on how characters/sessions/timelines will actually be queried", "status": "todo", "dependsOn": [] },
+					{ "id": "BE.2", "description": "Design dedicated backend API surface (routes/contracts) to replace the current SvelteKit server-side form actions", "status": "blocked", "dependsOn": ["BE.1"] },
+					{ "id": "BE.3", "description": "Implement the backend API layer", "status": "blocked", "dependsOn": ["BE.2"] }
+				]
+			},
+			{
+				"id": "M2",
+				"name": "Persistence",
+				"goal": "Persist characters and their generated timelines/sessions to the chosen data store.",
+				"tasks": [
+					{ "id": "PS.1", "description": "Design schema for characters and sessions (fields, relations to events/timeline data)", "status": "blocked", "dependsOn": ["BE.1"] },
+					{ "id": "PS.2", "description": "Implement save character/timeline to persistent storage", "status": "blocked", "dependsOn": ["PS.1", "BE.3"] },
+					{ "id": "PS.3", "description": "Implement load/list saved characters", "status": "blocked", "dependsOn": ["PS.2"] }
+				]
+			},
+			{
+				"id": "M3",
+				"name": "Accounts",
+				"goal": "Add user authentication and tie saved profiles to authenticated users.",
+				"tasks": [
+					{ "id": "AC.1", "description": "Implement user authentication", "status": "blocked", "dependsOn": ["BE.3"] },
+					{ "id": "AC.2", "description": "Tie saved profiles to the authenticated user (ownership checks; Row-Level Security if the data store is Postgres/Supabase)", "status": "blocked", "dependsOn": ["AC.1", "PS.2"] }
+				]
+			},
+			{
+				"id": "M4",
+				"name": "Narrative Quality",
+				"goal": "Improve the relevance of chosen facts and the coherence of timelines when read in aggregate. Independent of the backend/persistence work; can run in parallel.",
+				"tasks": [
+					{ "id": "NR.1", "description": "Audit fact relevance in current event selection: identify patterns behind irrelevant or low-value events being surfaced", "status": "todo", "dependsOn": [] },
+					{ "id": "NR.2", "description": "Tune significance/selection scoring for narrative relevance based on the audit findings", "status": "blocked", "dependsOn": ["NR.1"] },
+					{ "id": "NR.3", "description": "Improve aggregate timeline coherence: how selected events read together as a connected narrative, not just individually scored entries", "status": "blocked", "dependsOn": ["NR.2"] }
+				]
+			}
+		]
+	}
+]
