@@ -12,6 +12,11 @@
 - Production adapter: `@sveltejs/adapter-vercel` (deploys to Vercel; the
   server-side form action runs as a serverless function)
 
+### Data Store
+
+- Supabase (Postgres, Auth, Row-Level Security): chosen, not yet wired in.
+  Rationale in [`docs/adr/0001-data-store.md`](adr/0001-data-store.md)
+
 ### API
 
 - Wikipedia MediaWiki API — year-article events, sections, article sizes
